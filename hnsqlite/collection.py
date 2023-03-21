@@ -6,7 +6,7 @@ and search time filtering based on the metadata.
 
 from loguru import logger
 from sqlmodel import SQLModel, create_engine, Session, select, Field, Column, LargeBinary
-from pydantic import EmailStr, BaseModel, ValidationError, validator
+from pydantic import EmailStr, BaseModel, ValidationError, validator, root_validator
 import hnswlib
 from util import md5_file, _is_valid_namestr
 from typing import Optional, List, Tuple
@@ -19,7 +19,7 @@ from filter import filter_item
 
 CPU_COUNT = cpu_count()
 
-class HnswIndex(SQLModel, table=True):
+class HnswIndexConfig(SQLModel, table=True):
     """
     Configuration associated with an hnswlib index as stored in the database
     """
@@ -52,7 +52,7 @@ class CollectionConfig(SQLModel, table=True):
         _is_valid_namestr(v, 'name')
         return v
 
-
+    
 
 
 class Embedding(SQLModel, table=True):
@@ -61,10 +61,10 @@ class Embedding(SQLModel, table=True):
     """
     id:             int             = Field(primary_key=True,                                           
                                             description='Unique database identifier for a given embedding.')
-    vector:         bytes           = Field(sa_column=Column(LargeBinary), description='The user-supplied vector element. This should be sent in as a numpy array and will be serialized to bytes.')
+    vector:         bytes           = Field(sa_column=Column(LargeBinary), description='The user-supplied vector element as persisted in db as byte array. Should be sent in as a numpy array and will be converted to bytes for storage.')
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
     name:           Optional[str]   = Field(description="An optional human-readable name associated with the embedding.")
-    meta_data:      Optional[str]   = Field(alias="metadata", description="An optional json dictionary of metadata associated with the text.")
+    meta_data:      Optional[str]   = Field(alias="metadata", description="An optional json dictionary of metadata associated with the text.  Can be sent in as a dictionary and will be converted to json for storage.")
     created_at:     float           = Field(default_factory=time, description='The epoch timestamp when the embedding was created.')
     
     def __str__(self):
@@ -80,10 +80,19 @@ class Embedding(SQLModel, table=True):
         return estr
     
     def vector_as_array(self) -> np.array:    
+        """
+        return the stored vector as a numpy array        
+        """
         return np.frombuffer(self.vector, dtype=np.float32)
 
-
-    @validator('meta_data', pre=True)
+    @root_validator(pre=True)
+    def convert_vector(cls, values):
+        if 'vector' in values:
+            if isinstance(values['vector'], np.ndarray):
+                values['vector'] = values['vector'].astype(np.float32).tobytes()
+        return values
+    
+    @validator('meta_data')
     def _serialize_metadata(cls, v):
         if isinstance(v, dict):
             try:
@@ -162,7 +171,7 @@ class Collection :
         return Collection(db_engine, cconfig)
 
     @classmethod
-    def _save_index_to_disk(cls, name: str, hnsw_ix : HnswIndex) -> Tuple[str, str, int]:
+    def _save_index_to_disk(cls, name: str, hnsw_ix : HnswIndexConfig) -> Tuple[str, str, int]:
         """
         Save the current index to disk and return the filename, md5sum, and count of items in the index
         """
@@ -173,7 +182,7 @@ class Collection :
         logger.info(f"saved index to {filename} with md5sum {md5sum} and {count} items")
         return filename, md5sum, count
 
-    def _save_index_to_db(self, index: HnswIndex, delete_previous_index=True):
+    def _save_index_to_db(self, index: HnswIndexConfig, delete_previous_index=True):
         """
         Save the current index to the database
         """
@@ -181,7 +190,7 @@ class Collection :
             # delete old index from database and filesystem
             old_filenames = []
             if delete_previous_index:
-                for old_index in session.query(HnswIndex).filter(HnswIndex.collection_id == self.config.id).all():
+                for old_index in session.query(HnswIndexConfig).filter(HnswIndexConfig.collection_id == self.config.id).all():
                     old_filenames.append(old_index.filename)
                     session.delete(old_index)
             session.add(index)
@@ -198,24 +207,24 @@ class Collection :
     def save_index(self, delete_previous_index=True):
         """
         Save the current hnsw index
-        Used to persist the hnswindex after calling add_items or delete_items
+        Used to persist the HnswIndexConfig after calling add_items or delete_items
         """
         # save the index to disk
         filename, md5sum, count = Collection._save_index_to_disk(self.config.name, self.hnsw_ix)
 
         # create the new index record
-        index = HnswIndex(collection_id = self.config.id,
-                          count = count,
-                          filename = filename,
-                          md5sum = md5sum,
-                          M = self.index_data.M,
-                          ef_construction = self.index_data.ef_construction,
-                          ef = self.index_data.ef_construction)
+        index_config = HnswIndexConfig(collection_id = self.config.id,
+                                        count = count,
+                                        filename = filename,
+                                        md5sum = md5sum,
+                                        M = self.index_config.M,
+                                        ef_construction = self.index_config.ef_construction,
+                                        ef = self.index_config.ef_construction)
         
-        self._save_index_to_db(index, delete_previous_index=delete_previous_index)
+        self._save_index_to_db(index_config, delete_previous_index=delete_previous_index)
           
     
-    def make_index(self, M = 16, ef_construction = 200, delete_previous_index=True) -> HnswIndex:
+    def make_index(self, M = 16, ef_construction = 200, delete_previous_index=True) -> HnswIndexConfig:
         """
         create an hnsw index that includes all embeddings in the collection database and use this new index for the collection going forward
         Returns the database representation of the index, not the hnswlib index object.
@@ -257,56 +266,55 @@ class Collection :
         assert count == _count        
     
         # create the new index record
-        index = HnswIndex(collection_id = self.config.id,
-                          count = count,
-                          filename = filename,
-                          md5sum = md5sum,
-                          M = M,
-                          ef_construction = ef_construction,
-                          ef = ef_construction)
+        index = HnswIndexConfig(collection_id = self.config.id,
+                                count = count,
+                                filename = filename,
+                                md5sum = md5sum,
+                                M = M,
+                                ef_construction = ef_construction,
+                                ef = ef_construction)
 
         self._save_index_to_db(index, delete_previous_index=delete_previous_index)         
-        self.index_data = index     
+        self.index_config = index     
         self.hnsw_ix = hnsw_ix                                  
         return index
     
 
-    def load_index(self, index : Optional[HnswIndex] = None):
+    def load_index(self):
         """
         load the latest hnsw index from disk and use it for the collection.
-        Optionally a specific (older) index can be specified for benchmark comparison purposes.
         """
         logger.info(f"load index for {self.config}")        
-        if not index:
-            with Session(self.db_engine) as session:
-                index = session.exec(select(HnswIndex).where(HnswIndex.collection_id == self.config.id).order_by(HnswIndex.id.desc())).first()
-                if not index:
-                    self.make_index()   # intialize and load the index
-                    return
-        logger.info(f"loading index {index}")
-        md5sum = md5_file(index.filename)
-        if md5sum != self.index.md5sum:
-            logger.error(f"md5sum {md5sum} does not match config.md5sum {index.md5sum}")
-            raise Exception(f"md5sum {md5sum} does not match config.md5sum {index.md5sum}")
+        with Session(self.db_engine) as session:
+            index_config = session.exec(select(HnswIndexConfig).where(HnswIndexConfig.collection_id == self.config.id).order_by(HnswIndexConfig.id.desc())).first()
+            if not index_config:
+                self.make_index()   # intialize and load the index
+                return
+        logger.info(f"loading index {index_config}")
+        md5sum = md5_file(index_config.filename)
+        if md5sum != index_config.md5sum:
+            logger.error(f"md5sum {md5sum} does not match config.md5sum {index_config.md5sum}")
+            raise Exception(f"md5sum {md5sum} does not match config.md5sum {index_config.md5sum}")
         else:
             logger.info(f"md5sum matches index.md5sum")
         hnsw_ix = hnswlib.Index(space='cosine', dim=self.config.dim)
-        hnsw_ix.load_index(index.filename, max_elements=index.count)
-        hnsw_ix.set_ef(index.ef)
+        hnsw_ix.load_index(index_config.filename, max_elements=index_config.count)
+        hnsw_ix.set_ef(index_config.ef)
         hnsw_ix.set_num_threads(1)   # filtering requires 1 thread only
         logger.info("load hnswlib index {index} complete")
         self.hnsw_ix = hnsw_ix
-        self.index_data = index
-        # XXX validate that all expected vector IDs are in the index
+        self.index_config = index_config
+        # validate that all expected vector IDs are in the index
         with Session(self.db_engine) as session:
             # get just the ids from the database
             embs = set(session.exec(select(Embedding.id)).all())
         missing_ids = embs - set(self.hnsw_ix.get_ids_list())
         if missing_ids:
-            logger.info(f'updating index to include {len(missing_ids)} missing ids')
+            logger.info(f'updating index to include {len(missing_ids)} embedding ids found in db but not in index')
             embs = session.exec(select(Embedding).where(Embedding.id.in_(missing_ids))).all()
             self.add_embeddings(embs)
             self.save_index()
+            
             
     def __init__(self, db_engine, config : CollectionConfig) -> "Collection":
         self.db_engine = db_engine
@@ -365,13 +373,13 @@ class Collection :
         """
         alternative to add_items that takes a list of Embedding objects
         """
-        vectors = [e.vector for e in embeddings]
+        vectors = [e.vector_as_array() for e in embeddings]
         texts = [e.text for e in embeddings]
         names = [e.name for e in embeddings]
         meta_data = [e.meta_data for e in embeddings]
         self.add_items(vectors, texts, names, meta_data, save_index=save_index)
 
-    def search(self, vector: List[float], k = 12) -> List[SearchResponse]:        
+    def search(self, vector: np.array, k = 12) -> List[SearchResponse]:        
         """
         query the hnsw index for the nearest neighbors of the given vector
         unlike hnswlib which takes a 2D array of vectors, this method takes a single vector

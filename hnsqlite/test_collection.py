@@ -40,6 +40,13 @@ class TestCollection(unittest.TestCase):
 
         
 class TestCollection2(unittest.TestCase):
+    def tearDown(self):        
+        for f in os.listdir("."):
+            if f.endswith('.sqlite'):
+                os.remove(f)
+            if f.endswith('.hnsw'):
+                os.remove(f)    
+                
     def test_create_collection_valid(self):
         collection = Collection.create("test-collection1", 128)
         self.assertIsNotNone(collection)
@@ -51,8 +58,8 @@ class TestCollection2(unittest.TestCase):
             Collection.create("test_collection", -128)
 
     def test_load_collection_existing(self):
-        collection = Collection.create("test_collection2", 128)
-        loaded_collection = Collection.from_db("test_collection2")
+        collection = Collection.create("test-collection2", 128)
+        loaded_collection = Collection.from_db("test-collection2")
         self.assertIsNotNone(loaded_collection)
 
     def test_load_collection_nonexistent(self):
@@ -63,9 +70,9 @@ class TestCollection2(unittest.TestCase):
         collection = Collection.create("test-collection3", 128)
         vector = np.random.rand(128).astype(np.float32)
         text = "Test text"
-        embedding = Embedding(vector=vector.tobytes(), text=text)
+        embedding = Embedding(vector=vector, text=text)
         collection.add_embedding(embedding)
-        results = collection.search(vector)
+        results = collection.search(vector, k=1)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].item.text, text)
 
@@ -88,7 +95,7 @@ class TestCollection2(unittest.TestCase):
         collection = Collection.create("test-collection6", 128)
         vector = np.random.rand(128).astype(np.float32)
         collection.add_items([vector], ["Test text"])
-        results = collection.search(vector)
+        results = collection.search(vector, 1)
         self.assertEqual(len(results), 1)
 
     def test_search_invalid(self):
