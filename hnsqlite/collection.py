@@ -8,14 +8,14 @@ from loguru import logger
 from sqlmodel import SQLModel, create_engine, Session, select, Field, Column, LargeBinary
 from pydantic import EmailStr, BaseModel, ValidationError, validator, root_validator
 import hnswlib
-from util import md5_file, _is_valid_namestr
 from typing import Optional, List, Tuple
 from time import time
 from psutil import cpu_count
 import os
 from json import dumps, loads
 import numpy as np
-from filter import filter_item
+from .filter import filter_item
+from .util import md5_file, _is_valid_namestr
 
 CPU_COUNT = cpu_count()
 

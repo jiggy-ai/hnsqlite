@@ -1,6 +1,6 @@
 from loguru import logger
 import unittest
-from collection import Collection, Embedding
+from hnsqlite import Collection, Embedding
 import numpy as np
 import os
 
@@ -37,7 +37,13 @@ class TestCollection(unittest.TestCase):
             results = self.collection.search(vector, k=1)
             self.assertEqual(results[0].item.text, text)
             self.assertEqual(results[0].item.vector_as_array().tolist(), vector.tolist())
-
+        # test reload collection from db produces same results
+        newcollection = Collection.from_db(self.collection_name)
+        for vector, text in zip(vectors, texts):
+            results = newcollection.search(vector, k=1)
+            self.assertEqual(results[0].item.text, text)
+            self.assertEqual(results[0].item.vector_as_array().tolist(), vector.tolist())
+        
         
 class TestCollection2(unittest.TestCase):
     def tearDown(self):        
