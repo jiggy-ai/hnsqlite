@@ -1,2 +1,2 @@
 
-from .collection import HnswIndexConfig, Collection, Embedding, CollectionConfig, SearchResponse
+from .collection import dbHnswIndexConfig, Collection, dbEmbedding, dbCollectionConfig, SearchResponse

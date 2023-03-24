@@ -19,13 +19,13 @@ from .util import md5_file, _is_valid_namestr
 
 CPU_COUNT = cpu_count()
 
-class HnswIndexConfig(SQLModel, table=True):
+class dbHnswIndexConfig(SQLModel, table=True):
     """
     Configuration associated with an hnswlib index as stored in the database
     """
     id:                      int       = Field(primary_key=True,                                               
                                                description='Unique database identifier for a given index')
-    collection_id:           int       = Field(index=True, foreign_key="collectionconfig.id", description="The Collection that the index is associated with.")
+    collection_id:           int       = Field(index=True, foreign_key="dbcollectionconfig.id", description="The Collection that the index is associated with.")
     count:                   int       = Field(description="The number of vectors in the index.")
     filename:                str       = Field(description='The hnswlib index filename')
     md5sum:                  str       = Field(description='The md5sum of the index file')
@@ -35,7 +35,7 @@ class HnswIndexConfig(SQLModel, table=True):
     created_at:              float     = Field(default_factory=time, description='The epoch timestamp when the index was created.')
 
 
-class CollectionConfig(SQLModel, table=True):
+class dbCollectionConfig(SQLModel, table=True):
     """
     Configuration associated with a collection of strings, embeddings, as persisted in the database
     """
@@ -55,7 +55,7 @@ class CollectionConfig(SQLModel, table=True):
     
 
 
-class Embedding(SQLModel, table=True):
+class dbEmbedding(SQLModel, table=True):
     """
     An embedding as stored in the database
     """
@@ -111,13 +111,13 @@ class Embedding(SQLModel, table=True):
     @classmethod
     def from_id(cls, 
                 session: Session,
-                id: int) -> "Embedding":
-        return session.get(Embedding, id)
+                id: int) -> "dbEmbedding":
+        return session.get(dbEmbedding, id)
 
 
     
 class SearchResponse(BaseModel):
-    item: Embedding
+    item: dbEmbedding
     distance: float
 
 
@@ -140,7 +140,7 @@ class Collection :
             raise ValueError(f"collection with name {name} already exists")
         db_engine = create_engine(f"sqlite:///collection_{name}.sqlite")
         SQLModel.metadata.create_all(db_engine)                    
-        cconfig = CollectionConfig(name=name, 
+        cconfig = dbCollectionConfig(name=name, 
                                    dim=dim,
                                    model=modelname, 
                                    description=description)        
@@ -165,13 +165,13 @@ class Collection :
         logger.info(f"load collection {collection_name} from {dbfile}")
         db_engine = create_engine(f'sqlite:///{dbfile}')
         with Session(db_engine) as session:
-            cconfig = session.exec(select(CollectionConfig).where(CollectionConfig.name == collection_name)).first()
+            cconfig = session.exec(select(dbCollectionConfig).where(dbCollectionConfig.name == collection_name)).first()
             if cconfig is None:
                 raise Exception(f"Collection {collection_name} not found in {dbfile}")
         return Collection(db_engine, cconfig)
 
     @classmethod
-    def _save_index_to_disk(cls, name: str, hnsw_ix : HnswIndexConfig) -> Tuple[str, str, int]:
+    def _save_index_to_disk(cls, name: str, hnsw_ix : dbHnswIndexConfig) -> Tuple[str, str, int]:
         """
         Save the current index to disk and return the filename, md5sum, and count of items in the index
         """
@@ -182,7 +182,7 @@ class Collection :
         logger.info(f"saved index to {filename} with md5sum {md5sum} and {count} items")
         return filename, md5sum, count
 
-    def _save_index_to_db(self, index: HnswIndexConfig, delete_previous_index=True):
+    def _save_index_to_db(self, index: dbHnswIndexConfig, delete_previous_index=True):
         """
         Save the current index to the database
         """
@@ -190,7 +190,7 @@ class Collection :
             # delete old index from database and filesystem
             old_filenames = []
             if delete_previous_index:
-                for old_index in session.query(HnswIndexConfig).filter(HnswIndexConfig.collection_id == self.config.id).all():
+                for old_index in session.query(dbHnswIndexConfig).filter(dbHnswIndexConfig.collection_id == self.config.id).all():
                     old_filenames.append(old_index.filename)
                     session.delete(old_index)
             session.add(index)
@@ -207,13 +207,13 @@ class Collection :
     def save_index(self, delete_previous_index=True):
         """
         Save the current hnsw index
-        Used to persist the HnswIndexConfig after calling add_items or delete_items
+        Used to persist the dbHnswIndexConfig after calling add_items or delete_items
         """
         # save the index to disk
         filename, md5sum, count = Collection._save_index_to_disk(self.config.name, self.hnsw_ix)
 
         # create the new index record
-        index_config = HnswIndexConfig(collection_id = self.config.id,
+        index_config = dbHnswIndexConfig(collection_id = self.config.id,
                                         count = count,
                                         filename = filename,
                                         md5sum = md5sum,
@@ -224,7 +224,7 @@ class Collection :
         self._save_index_to_db(index_config, delete_previous_index=delete_previous_index)
           
     
-    def make_index(self, M = 16, ef_construction = 200, delete_previous_index=True) -> HnswIndexConfig:
+    def make_index(self, M = 16, ef_construction = 200, delete_previous_index=True) -> dbHnswIndexConfig:
         """
         create an hnsw index that includes all embeddings in the collection database and use this new index for the collection going forward
         Returns the database representation of the index, not the hnswlib index object.
@@ -233,7 +233,7 @@ class Collection :
         logger.info(f"make index for collection {self.config.name} with M={M}, ef_construction={ef_construction}")
         hnsw_ix = hnswlib.Index(space = 'cosine', dim = self.config.dim) 
         with Session(self.db_engine) as session:
-            count = session.query(Embedding).count()
+            count = session.query(dbEmbedding).count()
         hnsw_ix.set_num_threads(1)   # filtering requires 1 thread only
         # TODO: predict good ef_construction, M, ef values based on count and dim
         hnsw_ix.init_index(max_elements = count, ef_construction = ef_construction, M = M)
@@ -244,12 +244,12 @@ class Collection :
             count = 0
             BATCH_SIZE = CPU_COUNT*16
             # batches process of embeddings for efficiency
-            def process_batch(batch : list[Embedding]):            
+            def process_batch(batch : list[dbEmbedding]):            
                 # add batch of document embeddings to index
                 hnsw_ix.add_items([e.vector for e in batch], [e.id for e in batch])            
                 logger.info(f"hnsw_index.add_items   vectors/sec: {count/(time() - t0):.1f} ; total vectors: {count}")            
             batch = []            
-            for de in session.exec(select(Embedding)).yield_per(BATCH_SIZE):
+            for de in session.exec(select(dbEmbedding)).yield_per(BATCH_SIZE):
                 batch.append(de)
                 if len(batch) == BATCH_SIZE:
                     process_batch(batch)
@@ -266,7 +266,7 @@ class Collection :
         assert count == _count        
     
         # create the new index record
-        index = HnswIndexConfig(collection_id = self.config.id,
+        index = dbHnswIndexConfig(collection_id = self.config.id,
                                 count = count,
                                 filename = filename,
                                 md5sum = md5sum,
@@ -286,7 +286,7 @@ class Collection :
         """
         logger.info(f"load index for {self.config}")        
         with Session(self.db_engine) as session:
-            index_config = session.exec(select(HnswIndexConfig).where(HnswIndexConfig.collection_id == self.config.id).order_by(HnswIndexConfig.id.desc())).first()
+            index_config = session.exec(select(dbHnswIndexConfig).where(dbHnswIndexConfig.collection_id == self.config.id).order_by(dbHnswIndexConfig.id.desc())).first()
             if not index_config:
                 self.make_index()   # intialize and load the index
                 return
@@ -307,16 +307,16 @@ class Collection :
         # validate that all expected vector IDs are in the index
         with Session(self.db_engine) as session:
             # get just the ids from the database
-            embs = set(session.exec(select(Embedding.id)).all())
+            embs = set(session.exec(select(dbEmbedding.id)).all())
         missing_ids = embs - set(self.hnsw_ix.get_ids_list())
         if missing_ids:
             logger.info(f'updating index to include {len(missing_ids)} embedding ids found in db but not in index')
-            embs = session.exec(select(Embedding).where(Embedding.id.in_(missing_ids))).all()
+            embs = session.exec(select(dbEmbedding).where(dbEmbedding.id.in_(missing_ids))).all()
             self.add_embeddings(embs)
             self.save_index()
             
             
-    def __init__(self, db_engine, config : CollectionConfig) -> "Collection":
+    def __init__(self, db_engine, config : dbCollectionConfig) -> "Collection":
         self.db_engine = db_engine
         self.config = config
         self.load_index()
@@ -345,7 +345,7 @@ class Collection :
 
         # convert numpy vectors to bytes as float32 for storage in SQLite        
         vector_bytes = [v.astype(np.float32).tobytes() for v in vectors]
-        embeddings = [Embedding(vector=v, text=t, name=n, meta_data=m) for v, t, n, m in zip(vector_bytes, texts, names, meta_data)]      
+        embeddings = [dbEmbedding(vector=v, text=t, name=n, meta_data=m) for v, t, n, m in zip(vector_bytes, texts, names, meta_data)]      
         
         with Session(self.db_engine) as session:
             # Add new embeddings to the SQLite database
@@ -363,13 +363,13 @@ class Collection :
             self.save_index()
             
 
-    def add_embedding(self, embedding: Embedding, save_index=False) -> None:
+    def add_embedding(self, embedding: dbEmbedding, save_index=False) -> None:
         """
         add a single Embedding object to the collection
         """
         self.add_embeddings([embedding], save_index=save_index)
         
-    def add_embeddings(self, embeddings: List[Embedding], save_index=False) -> None:
+    def add_embeddings(self, embeddings: List[dbEmbedding], save_index=False) -> None:
         """
         alternative to add_items that takes a list of Embedding objects
         """
@@ -396,7 +396,7 @@ class Collection :
 
         # fetch the embeddings from the database by id
         with Session(self.db_engine) as session:
-            embeddings = session.exec(select(Embedding).where(Embedding.id.in_(ids))).all()
+            embeddings = session.exec(select(dbEmbedding).where(dbEmbedding.id.in_(ids))).all()
 
         # create a list of SearchResponse objects sorted by distance
         responses = [SearchResponse(item=e, distance=id_to_distance[e.id]) for e in embeddings]
