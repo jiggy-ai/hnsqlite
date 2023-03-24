@@ -1,6 +1,6 @@
 from loguru import logger
 import unittest
-from hnsqlite import Collection, dbEmbedding
+from hnsqlite import Collection, Embedding
 import numpy as np
 import os
 
@@ -76,7 +76,7 @@ class TestCollection2(unittest.TestCase):
         collection = Collection.create("test-collection3", 128)
         vector = np.random.rand(128).astype(np.float32)
         text = "Test text"
-        embedding = dbEmbedding(vector=vector, text=text)
+        embedding = Embedding(vector=vector, text=text)
         collection.add_embedding(embedding)
         results = collection.search(vector, k=1)
         self.assertEqual(len(results), 1)

@@ -55,13 +55,14 @@ class dbCollectionConfig(SQLModel, table=True):
     
 
 
+
 class dbEmbedding(SQLModel, table=True):
     """
     An embedding as stored in the database
     """
     id:             int             = Field(primary_key=True,                                           
                                             description='Unique database identifier for a given embedding.')
-    vector:         bytes           = Field(sa_column=Column(LargeBinary), description='The user-supplied vector element as persisted in db as byte array. Should be sent in as a numpy array and will be converted to bytes for storage.')
+    vector:         bytes           = Field(sa_column=Column(LargeBinary), description='The user-supplied vector element as persisted in db as byte array. If sent in as a numpy array will be converted to bytes for storage.')
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
     name:           Optional[str]   = Field(description="An optional human-readable name associated with the embedding.")
     meta_data:      Optional[str]   = Field(alias="metadata", description="An optional json dictionary of metadata associated with the text.  Can be sent in as a dictionary and will be converted to json for storage.")
@@ -85,6 +86,12 @@ class dbEmbedding(SQLModel, table=True):
         """
         return np.frombuffer(self.vector, dtype=np.float32)
 
+    def vector_as_list(self) -> list[float]:    
+        """
+        return the stored vector as a numpy array        
+        """
+        return np.frombuffer(self.vector, dtype=np.float32).tolist()
+    
     @root_validator(pre=True)
     def convert_vector(cls, values):
         if 'vector' in values:
@@ -115,9 +122,42 @@ class dbEmbedding(SQLModel, table=True):
         return session.get(dbEmbedding, id)
 
 
-    
+
+class Embedding(BaseModel):
+    """
+    An Embedding as sent to/from the Collection API
+    """
+    vector:         list[float]     = Field(description='The user-supplied vector element as stored as a list of floats. Can be sent in as a numpy array and will be converted to a list of floats.')   
+    text:           str             = Field(description="The text that was input to the model to generate this embedding.")
+    name:           Optional[str]   = Field(description="An optional human-readable name associated with the embedding.")
+    meta_data:      Optional[dict]  = Field(alias="metadata", description="An optional dictionary of metadata associated with the text")
+    created_at:     float           = Field(default_factory=time, description='The epoch timestamp when the embedding was created.')
+
+    @classmethod
+    def from_db(cls, db_embedding: dbEmbedding) -> "Embedding":
+        return Embedding(vector=db_embedding.vector_as_list(),
+                         text=db_embedding.text,
+                         name=db_embedding.name,
+                         meta_data=db_embedding.metadata_as_dict(),
+                         created_at=db_embedding.created_at)
+                         
+    @root_validator(pre=True)
+    def convert_vector(cls, values):
+        if 'vector' in values:
+            if isinstance(values['vector'], np.ndarray):
+                # convert np.array to list 
+                values['vector'] = values['vector'].tolist()
+        return values
+
+    def vector_as_array(self) -> np.array:    
+        """
+        return the stored vector as a numpy array        
+        """
+        return np.array(self.vector)
+
+        
 class SearchResponse(BaseModel):
-    item: dbEmbedding
+    item: Embedding
     distance: float
 
 
@@ -363,13 +403,13 @@ class Collection :
             self.save_index()
             
 
-    def add_embedding(self, embedding: dbEmbedding, save_index=False) -> None:
+    def add_embedding(self, embedding: Embedding, save_index=False) -> None:
         """
         add a single Embedding object to the collection
         """
         self.add_embeddings([embedding], save_index=save_index)
         
-    def add_embeddings(self, embeddings: List[dbEmbedding], save_index=False) -> None:
+    def add_embeddings(self, embeddings: List[Embedding], save_index=False) -> None:
         """
         alternative to add_items that takes a list of Embedding objects
         """
@@ -399,7 +439,7 @@ class Collection :
             embeddings = session.exec(select(dbEmbedding).where(dbEmbedding.id.in_(ids))).all()
 
         # create a list of SearchResponse objects sorted by distance
-        responses = [SearchResponse(item=e, distance=id_to_distance[e.id]) for e in embeddings]
+        responses = [SearchResponse(item=Embedding.from_db(e), distance=id_to_distance[e.id]) for e in embeddings]
         responses.sort(key=lambda r: r.distance)
         return responses
 
