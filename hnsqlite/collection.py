@@ -65,7 +65,7 @@ class dbEmbedding(SQLModel, table=True):
     vector:         bytes           = Field(sa_column=Column(LargeBinary), description='The user-supplied vector element as persisted in db as byte array. If sent in as a numpy array will be converted to bytes for storage.')
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
     name:           Optional[str]   = Field(description="An optional human-readable name associated with the embedding.")
-    meta_data:      Optional[str]   = Field(alias="metadata", description="An optional json dictionary of metadata associated with the text.  Can be sent in as a dictionary and will be converted to json for storage.")
+    meta:           Optional[str]   = Field(description="An optional json dictionary of metadata associated with the text.  Can be sent in as a dictionary and will be converted to json for storage.")
     created_at:     float           = Field(default_factory=time, description='The epoch timestamp when the embedding was created.')
     
     def __str__(self):
@@ -77,6 +77,8 @@ class dbEmbedding(SQLModel, table=True):
         estr = "Embedding("
         if self.name is not None:
             estr += f"name={self.name}, "
+        if self.meta is not None:
+            estr += f"metadata={self.metadata_as_dict()}, "
         estr += f"text={text})"
         return estr
     
@@ -93,26 +95,18 @@ class dbEmbedding(SQLModel, table=True):
         return np.frombuffer(self.vector, dtype=np.float32).tolist()
     
     @root_validator(pre=True)
-    def convert_vector(cls, values):
+    def convert(cls, values):
         if 'vector' in values:
             if isinstance(values['vector'], np.ndarray):
                 values['vector'] = values['vector'].astype(np.float32).tobytes()
+        if 'meta' in values:
+            if isinstance(values['meta'], dict):
+                values['meta'] = dumps(values['meta'])
         return values
-    
-    @validator('meta_data')
-    def _serialize_metadata(cls, v):
-        if isinstance(v, dict):
-            try:
-                v = dumps(v)
-            except:
-                raise ValueError('meta_data must be a json serializable dictionary')
-        elif v is not None:
-            raise ValueError('meta_data must be a json serializable dictionary or None')
-        return v
-    
+        
     def metadata_as_dict(self):        
-        if self.meta_data is not None:
-            return loads(self.meta_data)
+        if self.meta is not None:
+            return loads(self.meta)
 
             
     @classmethod
@@ -130,7 +124,7 @@ class Embedding(BaseModel):
     vector:         list[float]     = Field(description='The user-supplied vector element as stored as a list of floats. Can be sent in as a numpy array and will be converted to a list of floats.')   
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
     name:           Optional[str]   = Field(description="An optional human-readable name associated with the embedding.")
-    meta_data:      Optional[dict]  = Field(alias="metadata", description="An optional dictionary of metadata associated with the text")
+    metadata:       Optional[dict]  = Field(description="An optional dictionary of metadata associated with the text")
     created_at:     float           = Field(default_factory=time, description='The epoch timestamp when the embedding was created.')
 
     @classmethod
@@ -138,7 +132,7 @@ class Embedding(BaseModel):
         return Embedding(vector=db_embedding.vector_as_list(),
                          text=db_embedding.text,
                          name=db_embedding.name,
-                         meta_data=db_embedding.metadata_as_dict(),
+                         metadata=db_embedding.metadata_as_dict(),
                          created_at=db_embedding.created_at)
                          
     @root_validator(pre=True)
@@ -372,20 +366,20 @@ class Collection :
                   vectors:        List[np.array],   # todo: support ndarray 
                   texts:          List[str],        
                   names:          Optional[List[str]] = None,           
-                  meta_data:      Optional[List[dict]] = None,
+                  metadata:       Optional[List[dict]] = None,
                   save_index:     bool = True) -> None:             
         """
         add new items to the collection
-        """                     
+        """                             
         logger.debug(f"add_items {len(vectors)} items to {self.config.name}")               
-        if not meta_data:
-            meta_data = [None] * len(vectors)
-        if not names:
+        if metadata is None:
+            metadata = [None] * len(vectors)
+        if names is None:
             names = [None] * len(vectors)
 
         # convert numpy vectors to bytes as float32 for storage in SQLite        
         vector_bytes = [v.astype(np.float32).tobytes() for v in vectors]
-        embeddings = [dbEmbedding(vector=v, text=t, name=n, meta_data=m) for v, t, n, m in zip(vector_bytes, texts, names, meta_data)]      
+        embeddings = [dbEmbedding(vector=v, text=t, name=n, meta=m) for v, t, n, m in zip(vector_bytes, texts, names, metadata)]      
         
         with Session(self.db_engine) as session:
             # Add new embeddings to the SQLite database
@@ -395,7 +389,7 @@ class Collection :
             # Refresh the embeddings to get their assigned IDs
             for e in embeddings:
                 session.refresh(e)
-
+                
         count = self.hnsw_ix.get_current_count() + len(vectors)
         self.hnsw_ix.resize_index(count)
         self.hnsw_ix.add_items(vectors, [e.id for e in embeddings], num_threads=CPU_COUNT)
@@ -416,17 +410,40 @@ class Collection :
         vectors = [e.vector_as_array() for e in embeddings]
         texts = [e.text for e in embeddings]
         names = [e.name for e in embeddings]
-        meta_data = [e.meta_data for e in embeddings]
-        self.add_items(vectors, texts, names, meta_data, save_index=save_index)
+        metadata = [e.metadata for e in embeddings]
+        self.add_items(vectors, texts, names, metadata, save_index=save_index)
 
-    def search(self, vector: np.array, k = 12) -> List[SearchResponse]:        
+    def search(self, vector: np.array, k = 12, filter=None) -> List[SearchResponse]:        
         """
         query the hnsw index for the nearest neighbors of the given vector
         unlike hnswlib which takes a 2D array of vectors, this method takes a single vector
         since the common use case for this in production is searching for a single vector at a time
         """
+        if isinstance(vector, list):
+            vector = np.array(vector)
+        
+        def _filter(id):
+            with Session(self.db_engine) as session:
+                # todo: replace with in-memory option
+                e = session.exec(select(dbEmbedding).where(dbEmbedding.id == id)).first()                
+                metadata = e.metadata_as_dict()
+                result = filter_item(filter, metadata)                
+                return result
+        filter_func = _filter if filter else None
+
+        
         # query the current index for the nearest neighbors
-        ids, distances = self.hnsw_ix.knn_query([vector], k=k)
+        while k > 0:            
+            try:
+                ids, distances = self.hnsw_ix.knn_query([vector], k=k, filter=filter_func)
+                break
+            except RuntimeError:
+                # should verify there is at least 1 before commiting to this linear probe (or alternatively use a binary search)
+                logger.info(f"hnsw_ix.knn_query failed with k={k}")
+                k -= 1
+                
+        if k == 0:
+            raise Exception("hnsw_ix.knn_query failed with k=0")
 
         # ids and distances are returned as 2D arrays, so we need to flatten them to 1D
         # and then zip them together to create a dict of id:distance
@@ -443,6 +460,24 @@ class Collection :
         responses.sort(key=lambda r: r.distance)
         return responses
 
-  
-            
-
+    def delete(self, filter=None, delete_all=False) -> None:
+        """
+        delete items from the collection
+        """
+        if delete_all:
+            with Session(self.db_engine) as session:
+                session.exec("delete from embeddings")                
+                session.commit()          
+            self.make_index()  # create new index with no items
+            logger.info(f"deleted all items from {self.config.name}")
+        elif filter:
+            with Session(self.db_engine) as session:
+                eids = []                
+                for embedding in session.exec(select(dbEmbedding)).all():
+                    if filter_item(filter, embedding.medadata):                        
+                        eids.append(embedding.id)
+                        session.delete(embedding)
+                    self.hnsw_ix.delete_items(eids)
+                session.commit()
+            self.save_index()
+            logger.info(f"deleted {len(eids)} items from {self.config.name}")

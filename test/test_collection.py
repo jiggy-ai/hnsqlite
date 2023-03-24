@@ -54,25 +54,30 @@ class TestCollection2(unittest.TestCase):
                 os.remove(f)    
                 
     def test_create_collection_valid(self):
+        logger.info("test_create_collection_valid")
         collection = Collection.create("test-collection1", 128)
         self.assertIsNotNone(collection)
 
     def test_create_collection_invalid(self):
+        logger.info("test_create_collection_invalid")
         with self.assertRaises(Exception):
             Collection.create("", 128)
         with self.assertRaises(Exception):
             Collection.create("test_collection", -128)
 
     def test_load_collection_existing(self):
+        logger.info("test_load_collection_existing")
         collection = Collection.create("test-collection2", 128)
         loaded_collection = Collection.from_db("test-collection2")
         self.assertIsNotNone(loaded_collection)
 
     def test_load_collection_nonexistent(self):
+        logger.info("test_load_collection_nonexistent")
         with self.assertRaises(Exception):
             Collection.from_db("nonexistent-collection")
 
     def test_add_single_item(self):
+        logger.info("test_add_single_item")
         collection = Collection.create("test-collection3", 128)
         vector = np.random.rand(128).astype(np.float32)
         text = "Test text"
@@ -83,6 +88,7 @@ class TestCollection2(unittest.TestCase):
         self.assertEqual(results[0].item.text, text)
 
     def test_add_multiple_items(self):
+        logger.info("test_add_multiple_items")
         collection = Collection.create("test-collection4", 128)
         vectors = [np.random.rand(128).astype(np.float32) for _ in range(5)]
         texts = [f"Test text {i}" for i in range(5)]
@@ -91,6 +97,7 @@ class TestCollection2(unittest.TestCase):
         self.assertEqual(len(results), 5)
 
     def test_add_items_invalid(self):
+        logger.info("test_add_items_invalid")
         collection = Collection.create("test-collection5", 128)
         vectors = [np.random.rand(128).astype(np.float32) for _ in range(5)]
         texts = [f"Test text {i}" for i in range(4)]  # One less text than vectors
@@ -98,6 +105,7 @@ class TestCollection2(unittest.TestCase):
             collection.add_items(vectors, texts)
 
     def test_search_valid(self):
+        logger.info("test_search_valid")
         collection = Collection.create("test-collection6", 128)
         vector = np.random.rand(128).astype(np.float32)
         collection.add_items([vector], ["Test text"])
@@ -105,6 +113,7 @@ class TestCollection2(unittest.TestCase):
         self.assertEqual(len(results), 1)
 
     def test_search_invalid(self):
+        logger.info("test_search_invalid")
         collection = Collection.create("test-collection7", 128)
         vector = np.random.rand(64).astype(np.float32)  # Wrong length
         with self.assertRaises(Exception):

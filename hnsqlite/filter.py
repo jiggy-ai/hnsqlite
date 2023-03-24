@@ -9,6 +9,8 @@ Support metadata filtering similar to mongodb
 
 def filter_item(filter_dict : dict, metadata_dict : dict) -> bool:
     def apply_operator(operator, key, value):
+        if metadata_dict is None:
+            return False        
         metadata_value = metadata_dict.get(key)
         if operator == "$eq":
             if isinstance(metadata_value, list):
