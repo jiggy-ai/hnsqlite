@@ -119,5 +119,38 @@ class TestCollection2(unittest.TestCase):
         with self.assertRaises(Exception):
             collection.search(vector)
 
+
+
+class TestCollectionDelete(unittest.TestCase):
+
+    def setUp(self):
+        self.collection = Collection.create(name="test-collection", dim=2)
+        vectors = [np.array([0.1, 0.2]), np.array([0.3, 0.4]), np.array([0.5, 0.6])]
+        texts = ["text1", "text2", "text3"]
+        metadata = [{"category": "A"}, {"category": "B"}, {"category": "A"}]
+        self.collection.add_items(vectors, texts, metadata=metadata)
+
+    def tearDown(self):        
+        for f in os.listdir("."):
+            if f.endswith('.sqlite'):
+                os.remove(f)
+            if f.endswith('.hnsw'):
+                os.remove(f)    
+                
+    def test_delete_all(self):
+        self.collection.search(np.array([0.1, 0.2]), k=3)
+        self.collection.delete(delete_all=True)
+        with self.assertRaises(Exception):
+            self.collection.search(np.array([0.1, 0.2]), k=3)
+
+
+
+    def test_delete_with_filter(self):
+        filter = {"category": "A"}
+        self.collection.delete(filter=filter)
+        results = self.collection.search(np.array([0.1, 0.2]), k=2)
+        remaining_categories = [result.item.metadata["category"] for result in results]
+        self.assertNotIn("A", remaining_categories)
+
 if __name__ == '__main__':
     unittest.main()

@@ -466,18 +466,18 @@ class Collection :
         """
         if delete_all:
             with Session(self.db_engine) as session:
-                session.exec("delete from embeddings")                
+                session.exec("delete from dbembedding")                
                 session.commit()          
             self.make_index()  # create new index with no items
             logger.info(f"deleted all items from {self.config.name}")
         elif filter:
             with Session(self.db_engine) as session:
-                eids = []                
+                count = 0
                 for embedding in session.exec(select(dbEmbedding)).all():
-                    if filter_item(filter, embedding.medadata):                        
-                        eids.append(embedding.id)
+                    if filter_item(filter, embedding.metadata_as_dict()):
+                        self.hnsw_ix.mark_deleted(embedding.id)
                         session.delete(embedding)
-                    self.hnsw_ix.delete_items(eids)
+                        count += 1
                 session.commit()
             self.save_index()
-            logger.info(f"deleted {len(eids)} items from {self.config.name}")
+            logger.info(f"deleted {count} items from {self.config.name}")
