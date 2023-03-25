@@ -270,7 +270,7 @@ class Collection :
             count = session.query(dbEmbedding).count()
         hnsw_ix.set_num_threads(1)   # filtering requires 1 thread only
         # TODO: predict good ef_construction, M, ef values based on count and dim
-        hnsw_ix.init_index(max_elements = count, ef_construction = ef_construction, M = M)
+        hnsw_ix.init_index(max_elements = count, ef_construction = ef_construction, M = M, allow_replace_deleted=True)
         hnsw_ix.set_num_threads(CPU_COUNT)
         # add all elements to the index
         with Session(self.db_engine) as session:
@@ -332,7 +332,7 @@ class Collection :
         else:
             logger.info(f"md5sum matches index.md5sum")
         hnsw_ix = hnswlib.Index(space='cosine', dim=self.config.dim)
-        hnsw_ix.load_index(index_config.filename, max_elements=index_config.count)
+        hnsw_ix.load_index(index_config.filename, max_elements=index_config.count, allow_replace_deleted=True)
         hnsw_ix.set_ef(index_config.ef)
         hnsw_ix.set_num_threads(1)   # filtering requires 1 thread only
         logger.info("load hnswlib index {index} complete")
@@ -392,7 +392,7 @@ class Collection :
                 
         count = self.hnsw_ix.get_current_count() + len(vectors)
         self.hnsw_ix.resize_index(count)
-        self.hnsw_ix.add_items(vectors, [e.id for e in embeddings], num_threads=CPU_COUNT)
+        self.hnsw_ix.add_items(vectors, [e.id for e in embeddings], num_threads=CPU_COUNT, replace_deleted=True)
         if save_index:
             self.save_index()
             

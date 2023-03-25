@@ -20,7 +20,6 @@ class TestSearchWithFilter(unittest.TestCase):
             Embedding(vector=[0.5, 0.6], text="item3", metadata={"category": "A", "value": 3}),
             Embedding(vector=[0.7, 0.8], text="item4", metadata={"category": "B", "value": 4})
         ]
-        logger.warning(embeddings)
         self.collection.add_embeddings(embeddings)
 
 
