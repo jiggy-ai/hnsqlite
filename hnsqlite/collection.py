@@ -19,6 +19,9 @@ from .util import md5_file, _is_valid_namestr
 
 CPU_COUNT = cpu_count()
 
+class NoResultError(Exception):
+    pass
+
 class dbHnswIndexConfig(SQLModel, table=True):
     """
     Configuration associated with an hnswlib index as stored in the database
@@ -127,6 +130,20 @@ class Embedding(BaseModel):
     metadata:       Optional[dict]  = Field(description="An optional dictionary of metadata associated with the text")
     created_at:     float           = Field(default_factory=time, description='The epoch timestamp when the embedding was created.')
 
+    def __str__(self) -> str:
+        if len(self.text) > 400:
+            text = self.text[:400] + '...'
+        else: 
+            text = self.text
+        text = text.replace('\n', ' ')
+        estr = "Embedding("
+        if self.name is not None:
+            estr += f"name={self.name}, "
+        if self.metadata is not None:
+            estr += f"metadata={self.metadata}, "
+        estr += f"text='{text}')"
+        return estr
+    
     @classmethod
     def from_db(cls, db_embedding: dbEmbedding) -> "Embedding":
         return Embedding(vector=db_embedding.vector_as_list(),
@@ -195,8 +212,10 @@ class Collection :
             collection_name = dbfile.split("_")[1].split('.')[0]                    
         else:
             dbfile = f"collection_{name}.sqlite"
-            collection_name = name
+            collection_name = name        
         logger.info(f"load collection {collection_name} from {dbfile}")
+        if not os.path.exists(dbfile):
+            raise FileNotFoundError
         db_engine = create_engine(f'sqlite:///{dbfile}')
         with Session(db_engine) as session:
             cconfig = session.exec(select(dbCollectionConfig).where(dbCollectionConfig.name == collection_name)).first()
@@ -335,7 +354,7 @@ class Collection :
         hnsw_ix.load_index(index_config.filename, max_elements=index_config.count, allow_replace_deleted=True)
         hnsw_ix.set_ef(index_config.ef)
         hnsw_ix.set_num_threads(1)   # filtering requires 1 thread only
-        logger.info("load hnswlib index {index} complete")
+        logger.info(f"load hnswlib index {index_config} complete")
         self.hnsw_ix = hnsw_ix
         self.index_config = index_config
         # validate that all expected vector IDs are in the index
@@ -345,8 +364,11 @@ class Collection :
         missing_ids = embs - set(self.hnsw_ix.get_ids_list())
         if missing_ids:
             logger.info(f'updating index to include {len(missing_ids)} embedding ids found in db but not in index')
-            embs = session.exec(select(dbEmbedding).where(dbEmbedding.id.in_(missing_ids))).all()
-            self.add_embeddings(embs)
+            embeddings = session.exec(select(dbEmbedding).where(dbEmbedding.id.in_(missing_ids))).all()
+            count = self.hnsw_ix.get_current_count() + len(embeddings)
+            self.hnsw_ix.resize_index(count)
+            vectors = [e.vector_as_array() for e in embeddings]
+            self.hnsw_ix.add_items(vectors, [e.id for e in embeddings], num_threads=CPU_COUNT, replace_deleted=True)      
             self.save_index()
             
             
@@ -371,7 +393,6 @@ class Collection :
         """
         add new items to the collection
         """                             
-        logger.debug(f"add_items {len(vectors)} items to {self.config.name}")               
         if metadata is None:
             metadata = [None] * len(vectors)
         if names is None:
@@ -413,6 +434,16 @@ class Collection :
         metadata = [e.metadata for e in embeddings]
         self.add_items(vectors, texts, names, metadata, save_index=save_index)
 
+    def count(self) -> int:
+        """
+        return the number of items in the collection
+        """
+        logger.debug(f"count items in {self.config.name}")
+        with Session(self.db_engine) as session:
+            for emb in session.query(dbEmbedding):
+                logger.debug(emb)
+            return session.query(dbEmbedding).count()
+        
     def search(self, vector: np.array, k = 12, filter=None) -> List[SearchResponse]:        
         """
         query the hnsw index for the nearest neighbors of the given vector
@@ -443,7 +474,7 @@ class Collection :
                 k -= 1
                 
         if k == 0:
-            raise Exception("hnsw_ix.knn_query failed with k=0")
+            raise NoResultError("hnsw_ix.knn_query failed with k=0")
 
         # ids and distances are returned as 2D arrays, so we need to flatten them to 1D
         # and then zip them together to create a dict of id:distance
@@ -471,6 +502,7 @@ class Collection :
             self.make_index()  # create new index with no items
             logger.info(f"deleted all items from {self.config.name}")
         elif filter:
+            logger.warning(f"deleting items from {self.config.name} with filter: {filter}")
             with Session(self.db_engine) as session:
                 count = 0
                 for embedding in session.exec(select(dbEmbedding)).all():
