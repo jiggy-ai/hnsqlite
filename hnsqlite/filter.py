@@ -1,17 +1,18 @@
 """
-
 Metadata filtering
 
 Support metadata filtering similar to mongodb
-
 """
-
+from loguru import logger
 
 def filter_item(filter_dict : dict, metadata_dict : dict) -> bool:
     def apply_operator(operator, key, value):
+        #logger.debug(f"apply_operator: {operator}, {key}, {value}")
         if metadata_dict is None:
             return False        
         metadata_value = metadata_dict.get(key)
+        if metadata_value is None:
+            return False
         if operator == "$eq":
             if isinstance(metadata_value, list):
                 return value in metadata_value
