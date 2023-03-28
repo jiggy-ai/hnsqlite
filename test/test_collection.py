@@ -127,8 +127,9 @@ class TestCollectionDelete(unittest.TestCase):
         self.collection = Collection.create(name="test-collection", dim=2)
         vectors = [np.array([0.1, 0.2]), np.array([0.3, 0.4]), np.array([0.5, 0.6])]
         texts = ["text1", "text2", "text3"]
+        doc_ids = ["doc1", "doc2", "doc3"]
         metadata = [{"category": "A"}, {"category": "B"}, {"category": "A"}]
-        self.collection.add_items(vectors, texts, metadata=metadata)
+        self.collection.add_items(vectors, texts, doc_ids=doc_ids,  metadata=metadata)
 
     def tearDown(self):        
         for f in os.listdir("."):
@@ -143,14 +144,27 @@ class TestCollectionDelete(unittest.TestCase):
         with self.assertRaises(Exception):
             self.collection.search(np.array([0.1, 0.2]), k=3)
 
-
-
     def test_delete_with_filter(self):
         filter = {"category": "A"}
         self.collection.delete(filter=filter)
         results = self.collection.search(np.array([0.1, 0.2]), k=2)
         remaining_categories = [result.metadata["category"] for result in results]
         self.assertNotIn("A", remaining_categories)
+
+    def test_delete_by_doc_id(self):
+        doc_ids_to_delete = ["doc1", "doc3"]
+        # first verify that the documents are there
+        results = self.collection.search(np.array([0.1, 0.2]), k=3)        
+        remaining_doc_ids = [result.doc_id for result in results]
+        for doc_id in doc_ids_to_delete:
+            self.assertIn(doc_id, remaining_doc_ids)
+        # now delete them
+        self.collection.delete(doc_ids=doc_ids_to_delete)
+        # and verify that they are gone
+        results = self.collection.search(np.array([0.1, 0.2]), k=2)
+        remaining_doc_ids = [result.doc_id for result in results]
+        for doc_id in doc_ids_to_delete:
+            self.assertNotIn(doc_id, remaining_doc_ids)
 
 if __name__ == '__main__':
     unittest.main()

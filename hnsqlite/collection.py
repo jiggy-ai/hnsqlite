@@ -8,7 +8,7 @@ from loguru import logger
 from sqlmodel import SQLModel, create_engine, Session, select, Field, Column, LargeBinary
 from pydantic import EmailStr, BaseModel, ValidationError, validator, root_validator
 import hnswlib
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple, Union
 from time import time
 from psutil import cpu_count
 import os
@@ -67,7 +67,7 @@ class dbEmbedding(SQLModel, table=True):
                                             description='Unique database identifier for a given embedding.')
     vector:         bytes           = Field(sa_column=Column(LargeBinary), description='The user-supplied vector element as persisted in db as byte array. If sent in as a numpy array will be converted to bytes for storage.')
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
-    name:           Optional[str]   = Field(description="An optional human-readable name associated with the embedding.")
+    doc_id:         Optional[str]   = Field(description="An optional document_id associated with the embedding.")
     meta:           Optional[str]   = Field(description="An optional json dictionary of metadata associated with the text.  Can be sent in as a dictionary and will be converted to json for storage.")
     created_at:     float           = Field(default_factory=time, description='The epoch timestamp when the embedding was created.')
     
@@ -78,8 +78,8 @@ class dbEmbedding(SQLModel, table=True):
             text = self.text
         text = text.replace('\n', ' ')
         estr = "Embedding("
-        if self.name is not None:
-            estr += f"name={self.name}, "
+        if self.doc_id is not None:
+            estr += f"doc_id={self.doc_id}, "
         if self.meta is not None:
             estr += f"metadata={self.metadata_as_dict()}, "
         estr += f"text={text})"
@@ -110,7 +110,6 @@ class dbEmbedding(SQLModel, table=True):
     def metadata_as_dict(self):        
         if self.meta is not None:
             return loads(self.meta)
-
             
     @classmethod
     def from_id(cls, 
@@ -126,7 +125,7 @@ class Embedding(BaseModel):
     """
     vector:         list[float]     = Field(description='The user-supplied vector element as stored as a list of floats. Can be sent in as a numpy array and will be converted to a list of floats.')   
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
-    name:           Optional[str]   = Field(description="An optional human-readable name associated with the embedding.")
+    doc_id:         Optional[str]   = Field(description="An optional document_id associated with the embedding.")
     metadata:       Optional[dict]  = Field(description="An optional dictionary of metadata associated with the text")
     created_at:     float           = Field(default_factory=time, description='The epoch timestamp when the embedding was created.')
 
@@ -137,8 +136,8 @@ class Embedding(BaseModel):
             text = self.text
         text = text.replace('\n', ' ')
         estr = "Embedding("
-        if self.name is not None:
-            estr += f"name={self.name}, "
+        if self.doc_id is not None:
+            estr += f"doc_id={self.doc_id}, "
         if self.metadata is not None:
             estr += f"metadata={self.metadata}, "
         estr += f"text='{text}')"
@@ -148,7 +147,7 @@ class Embedding(BaseModel):
     def from_db(cls, db_embedding: dbEmbedding) -> "Embedding":
         return Embedding(vector=db_embedding.vector_as_list(),
                          text=db_embedding.text,
-                         name=db_embedding.name,
+                         doc_id=db_embedding.doc_id,
                          metadata=db_embedding.metadata_as_dict(),
                          created_at=db_embedding.created_at)
                          
@@ -389,20 +388,20 @@ class Collection :
     def add_items(self,
                   vectors:        List[np.array],   # todo: support ndarray 
                   texts:          List[str],        
-                  names:          Optional[List[str]] = None,           
-                  metadata:       Optional[List[dict]] = None,
+                  doc_ids:        Optional[List[str]] = None,
+                  metadata:       Optional[List[dict]] = None,                 
                   save_index:     bool = True) -> None:             
         """
         add new items to the collection
         """                             
         if metadata is None:
             metadata = [None] * len(vectors)
-        if names is None:
-            names = [None] * len(vectors)
+        if doc_ids is None:
+            doc_ids = [None] * len(vectors)
 
         # convert numpy vectors to bytes as float32 for storage in SQLite        
         vector_bytes = [v.astype(np.float32).tobytes() for v in vectors]
-        embeddings = [dbEmbedding(vector=v, text=t, name=n, meta=m) for v, t, n, m in zip(vector_bytes, texts, names, metadata)]      
+        embeddings = [dbEmbedding(vector=v, text=t, doc_id=d, meta=m) for v, t, d, m in zip(vector_bytes, texts, doc_ids, metadata)]      
         
         with Session(self.db_engine) as session:
             # Add new embeddings to the SQLite database
@@ -432,9 +431,9 @@ class Collection :
         """
         vectors = [e.vector_as_array() for e in embeddings]
         texts = [e.text for e in embeddings]
-        names = [e.name for e in embeddings]
+        doc_ids = [e.doc_id for e in embeddings]
         metadata = [e.metadata for e in embeddings]
-        self.add_items(vectors, texts, names, metadata, save_index=save_index)
+        self.add_items(vectors, texts, doc_ids, metadata, save_index=save_index)
 
     def count(self) -> int:
         """
@@ -493,25 +492,31 @@ class Collection :
         responses.sort(key=lambda r: r.distance)
         return responses
 
-    def delete(self, filter=None, delete_all=False) -> None:
+    def delete(self, doc_ids : Optional[List[str]] = None, filter : Optional[dict] = None, delete_all : bool = False) -> None:
         """
-        delete items from the collection
+        delete items from the collection based on doc_ids, items matching a filter, or everything
         """
         if delete_all:
             with Session(self.db_engine) as session:
                 session.exec("delete from dbembedding")                
                 session.commit()          
             self.make_index()  # create new index with no items
-            logger.info(f"deleted all items from {self.config.name}")
-        elif filter:
-            logger.warning(f"deleting items from {self.config.name} with filter: {filter}")
+            logger.warning(f"deleted all items from {self.config.name}")
+        elif doc_ids:
+            logger.info(f"deleting {len(doc_ids)} items from {self.config.name}")
             with Session(self.db_engine) as session:
-                count = 0
+                for embedding in session.exec(select(dbEmbedding).where(dbEmbedding.doc_id.in_(doc_ids))):
+                    self.hnsw_ix.mark_deleted(embedding.id)
+                    session.delete(embedding)
+                session.commit()
+            self.save_index()
+        elif filter:
+            logger.info(f"deleting items from {self.config.name} with filter: {filter}")
+            with Session(self.db_engine) as session:
                 for embedding in session.exec(select(dbEmbedding)).all():
                     if filter_item(filter, embedding.metadata_as_dict()):
                         self.hnsw_ix.mark_deleted(embedding.id)
                         session.delete(embedding)
-                        count += 1
                 session.commit()
             self.save_index()
-            logger.info(f"deleted {count} items from {self.config.name}")
+
