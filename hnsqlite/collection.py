@@ -16,6 +16,7 @@ from json import dumps, loads
 import numpy as np
 from .filter import filter_item
 from .util import md5_file, _is_valid_namestr
+import sqlite3
 
 CPU_COUNT = cpu_count()
 
@@ -54,9 +55,7 @@ class dbCollectionConfig(SQLModel, table=True):
     def _name(cls, v):
         _is_valid_namestr(v, 'name')
         return v
-
     
-
 
 
 class dbEmbedding(SQLModel, table=True):
@@ -238,7 +237,7 @@ class Collection :
 
     def _save_index_to_db(self, index: dbHnswIndexConfig, delete_previous_index=True):
         """
-        Save the current index to the database
+        Save the current index config to the database
         """
         with Session(self.db_engine) as session:
             # delete old index from database and filesystem
@@ -258,7 +257,7 @@ class Collection :
             logger.info(f"saved index to database with id {index.id}")
 
         
-    def save_index(self, delete_previous_index=True):
+    def save_index(self, delete_previous_index=True) -> str:
         """
         Save the current hnsw index
         Used to persist the dbHnswIndexConfig after calling add_items or delete_items
@@ -276,7 +275,7 @@ class Collection :
                                         ef = self.index_config.ef_construction)
         
         self._save_index_to_db(index_config, delete_previous_index=delete_previous_index)
-          
+        return filename
     
     def make_index(self, M = 16, ef_construction = 200, delete_previous_index=True) -> dbHnswIndexConfig:
         """
@@ -520,3 +519,74 @@ class Collection :
                 session.commit()
             self.save_index()
 
+    def backup(self) -> Tuple[str, str]:
+        """
+        save the sqlite database and index and return the filenames as (sqlite_backup_fn, hnsw_index_fn)
+        """
+        hnsw_index_fn = self.save_index()
+        db_fn = f"collection_{self.config.name}.sqlite"
+        sqlite_backup_fn = f'/tmp/{db_fn}'
+        source_conn = sqlite3.connect(db_fn)
+        try:
+            os.unlink(sqlite_backup_fn)
+        except:
+            pass
+        destination_conn = sqlite3.connect(sqlite_backup_fn)        
+        source_conn.backup(destination_conn)
+        source_conn.close()
+        destination_conn.close()
+        return sqlite_backup_fn, hnsw_index_fn
+
+    def backup_s3(self, 
+                  bucket_name : str,
+                  endpoint_url : str,
+                  storage_key_id : str,
+                  storage_secret_key : str) -> Tuple[str, str]:
+        """
+        backup the sqlite database and index to s3
+        """
+        import boto3
+        s3 = boto3.resource('s3',
+                            endpoint_url=endpoint_url,
+                            aws_access_key_id=storage_key_id,
+                            aws_secret_access_key=storage_secret_key)
+        sqlite_backup_fn, hnsw_index_fn = self.backup()
+        sqlite_object_name = f"hnsqlite/collection_{self.config.name}.sqlite"
+        hnsw_object_name = f"hnsqlite/{hnsw_index_fn}"
+        bucket = s3.Bucket(bucket_name)
+        bucket.upload_file(sqlite_backup_fn, sqlite_object_name)
+        bucket.upload_file(hnsw_index_fn,  hnsw_object_name)
+
+    @classmethod
+    def from_s3(cls, 
+                collection_name : str, 
+                bucket_name : str,
+                endpoint_url : str,
+                storage_key_id : str,
+                storage_secret_key : str) -> "Collection":
+        """
+        create a Collection object from a sqlite collection database file
+        name can be either the filename or the collection name
+        """
+        import boto3
+        dbfile = f"collection_{collection_name}.sqlite"
+        sqlite_object_name = f"hnsqlite/{dbfile}"
+        s3 = boto3.resource('s3',
+                            endpoint_url=endpoint_url,
+                            aws_access_key_id=storage_key_id,
+                            aws_secret_access_key=storage_secret_key)      
+        bucket = s3.Bucket(bucket_name)  
+        logger.info(f"load collection {collection_name} from s3")                
+        bucket.download_file(sqlite_object_name, dbfile)
+        db_engine = create_engine(f'sqlite:///{dbfile}')
+        with Session(db_engine) as session:
+            cconfig = session.exec(select(dbCollectionConfig).where(dbCollectionConfig.name == collection_name)).first()
+            if cconfig is None:
+                raise Exception(f"Collection {collection_name} not found in {dbfile}")
+            index_config = session.exec(select(dbHnswIndexConfig).where(dbHnswIndexConfig.collection_id == cconfig.id).order_by(dbHnswIndexConfig.id.desc())).first()
+            if not index_config:            
+                raise Exception(f"Collection {collection_name} has no index in {dbfile}")
+        hnsw_index_fn = index_config.filename
+        hnsw_object_name = f"hnsqlite/{hnsw_index_fn}"
+        bucket.download_file(hnsw_object_name, hnsw_index_fn)
+        return Collection(db_engine, cconfig)        
