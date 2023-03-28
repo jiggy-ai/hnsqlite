@@ -167,8 +167,10 @@ class Embedding(BaseModel):
         return np.array(self.vector)
 
         
-class SearchResponse(BaseModel):
-    item: Embedding
+class SearchResponse(Embedding):
+    """
+    Return a search result consisting of an embedding and the distance to the query vector
+    """
     distance: float
 
 
@@ -487,7 +489,7 @@ class Collection :
             embeddings = session.exec(select(dbEmbedding).where(dbEmbedding.id.in_(ids))).all()
 
         # create a list of SearchResponse objects sorted by distance
-        responses = [SearchResponse(item=Embedding.from_db(e), distance=id_to_distance[e.id]) for e in embeddings]
+        responses = [SearchResponse(**Embedding.from_db(e).dict(), distance=id_to_distance[e.id]) for e in embeddings]
         responses.sort(key=lambda r: r.distance)
         return responses
 

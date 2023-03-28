@@ -36,7 +36,7 @@ class TestSearchWithFilter(unittest.TestCase):
 
         # Check if the results only contain items with category "A"
         for result in results:
-            self.assertEqual(result.item.metadata["category"], "A")
+            self.assertEqual(result.metadata["category"], "A")
 
     def test_search_filter_value(self):
         query_vector = np.array([0.1, 0.2])
@@ -45,7 +45,7 @@ class TestSearchWithFilter(unittest.TestCase):
 
         # Check if the results only contain items with value > 2
         for result in results:
-            self.assertGreater(result.item.metadata["value"], 2)
+            self.assertGreater(result.metadata["value"], 2)
 
     def test_search_filter_and(self):
         query_vector = np.array([0.1, 0.2])
@@ -54,8 +54,8 @@ class TestSearchWithFilter(unittest.TestCase):
 
         # Check if the results only contain items with category "A" and value > 1
         for result in results:
-            self.assertEqual(result.item.metadata["category"], "A")
-            self.assertGreater(result.item.metadata["value"], 1)
+            self.assertEqual(result.metadata["category"], "A")
+            self.assertGreater(result.metadata["value"], 1)
 
     def test_search_filter_or(self):
         query_vector = np.array([0.1, 0.2])
@@ -64,7 +64,7 @@ class TestSearchWithFilter(unittest.TestCase):
 
         # Check if the results only contain items with category "A" or value > 3
         for result in results:
-            self.assertTrue(result.item.metadata["category"] == "A" or result.item.metadata["value"] > 3)
+            self.assertTrue(result.metadata["category"] == "A" or result.metadata["value"] > 3)
 
 if __name__ == "__main__":
     unittest.main()

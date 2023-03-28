@@ -35,14 +35,14 @@ class TestCollection(unittest.TestCase):
         self.collection.add_items(vectors, texts)
         for vector, text in zip(vectors, texts):
             results = self.collection.search(vector, k=1)
-            self.assertEqual(results[0].item.text, text)
-            self.assertEqual(results[0].item.vector_as_array().tolist(), vector.tolist())
+            self.assertEqual(results[0].text, text)
+            self.assertEqual(results[0].vector_as_array().tolist(), vector.tolist())
         # test reload collection from db produces same results
         newcollection = Collection.from_db(self.collection_name)
         for vector, text in zip(vectors, texts):
             results = newcollection.search(vector, k=1)
-            self.assertEqual(results[0].item.text, text)
-            self.assertEqual(results[0].item.vector_as_array().tolist(), vector.tolist())
+            self.assertEqual(results[0].text, text)
+            self.assertEqual(results[0].vector_as_array().tolist(), vector.tolist())
         
         
 class TestCollection2(unittest.TestCase):
@@ -85,7 +85,7 @@ class TestCollection2(unittest.TestCase):
         collection.add_embedding(embedding)
         results = collection.search(vector, k=1)
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].item.text, text)
+        self.assertEqual(results[0].text, text)
 
     def test_add_multiple_items(self):
         logger.info("test_add_multiple_items")
@@ -149,7 +149,7 @@ class TestCollectionDelete(unittest.TestCase):
         filter = {"category": "A"}
         self.collection.delete(filter=filter)
         results = self.collection.search(np.array([0.1, 0.2]), k=2)
-        remaining_categories = [result.item.metadata["category"] for result in results]
+        remaining_categories = [result.metadata["category"] for result in results]
         self.assertNotIn("A", remaining_categories)
 
 if __name__ == '__main__':
