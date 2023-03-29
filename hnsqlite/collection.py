@@ -439,8 +439,6 @@ class Collection :
         return the number of items in the collection
         """
         with Session(self.db_engine) as session:
-            for emb in session.query(dbEmbedding):
-                logger.debug(emb)
             return session.query(dbEmbedding).count()
 
     def get_embeddings(self, start: int, limit: int, reverse :bool) -> List[Embedding]:
