@@ -166,5 +166,44 @@ class TestCollectionDelete(unittest.TestCase):
         for doc_id in doc_ids_to_delete:
             self.assertNotIn(doc_id, remaining_doc_ids)
 
+
+class TestGetEmbeddings(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        # Create a test collection
+        cls.collection = Collection.create(name="test-collection", dim=128)
+
+        # Add some embeddings to the collection
+        embeddings = [
+            Embedding(vector=np.random.rand(128).tolist(), text="This is a test text 1."),
+            Embedding(vector=np.random.rand(128).tolist(), text="This is a test text 2."),
+            Embedding(vector=np.random.rand(128).tolist(), text="This is a test text 3."),
+        ]
+        cls.collection.add_embeddings(embeddings)
+
+    @classmethod
+    def tearDownClass(cls):
+        # Delete the test collection
+        cls.collection.delete(delete_all=True)
+        for f in os.listdir("."):
+            if f.endswith('.sqlite'):
+                os.remove(f)
+            if f.endswith('.hnsw'):
+                os.remove(f)    
+                
+    def test_get_embeddings(self):
+        # Test getting the first two embeddings
+        embeddings = self.collection.get_embeddings(start=0, limit=2, reverse=False)
+        self.assertEqual(len(embeddings), 2)
+        self.assertEqual(embeddings[0].text, "This is a test text 1.")
+        self.assertEqual(embeddings[1].text, "This is a test text 2.")
+
+        # Test getting the last embedding in reverse order
+        embeddings = self.collection.get_embeddings(start=0, limit=1, reverse=True)
+        self.assertEqual(len(embeddings), 1)
+        self.assertEqual(embeddings[0].text, "This is a test text 3.")
+
+
 if __name__ == '__main__':
     unittest.main()

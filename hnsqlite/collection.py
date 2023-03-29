@@ -5,7 +5,7 @@ and search time filtering based on the metadata.
 """
 
 from loguru import logger
-from sqlmodel import SQLModel, create_engine, Session, select, Field, Column, LargeBinary
+from sqlmodel import SQLModel, create_engine, Session, select, Field, Column, LargeBinary,  desc, asc
 from pydantic import EmailStr, BaseModel, ValidationError, validator, root_validator
 import hnswlib
 from typing import List, Optional, Tuple, Union
@@ -438,12 +438,23 @@ class Collection :
         """
         return the number of items in the collection
         """
-        logger.debug(f"count items in {self.config.name}")
         with Session(self.db_engine) as session:
             for emb in session.query(dbEmbedding):
                 logger.debug(emb)
             return session.query(dbEmbedding).count()
-        
+
+    def get_embeddings(self, start: int, limit: int, reverse :bool) -> List[Embedding]:
+        """
+        return a list of Embedding objects from the collection
+        """
+        with Session(self.db_engine) as session:    
+            if reverse:
+                query = select(dbEmbedding).order_by(desc(dbEmbedding.id)).offset(start).limit(limit)
+            else:
+                query = select(dbEmbedding).order_by(asc(dbEmbedding.id)).offset(start).limit(limit)                        
+            return session.exec(query).all()
+
+                
     def search(self, vector: np.array, k = 12, filter=None) -> List[SearchResponse]:        
         """
         query the hnsw index for the nearest neighbors of the given vector
