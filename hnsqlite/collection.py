@@ -452,7 +452,7 @@ class Collection :
                 query = select(dbEmbedding).order_by(desc(dbEmbedding.id)).offset(start).limit(limit)
             else:
                 query = select(dbEmbedding).order_by(asc(dbEmbedding.id)).offset(start).limit(limit)                        
-            return session.exec(query).all()
+            return [Embedding.from_db(e) for e in session.exec(query)]
 
                 
     def search(self, vector: np.array, k = 12, filter=None) -> List[SearchResponse]:        
