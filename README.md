@@ -1,6 +1,6 @@
 # hnsqlite
 
-`hnsqlite` is a text-centric integration of SQLite and HNSWLIB to provide a persistent collection of embeddings (strings, vectors, and metadata) and search time filtering based on the metadata.
+`hnsqlite` is a text-centric integration of SQLite and [HNSWLIB](https://github.com/nmslib/hnswlib) to provide a persistent collection of embeddings (strings, vectors, and metadata) and search time filtering based on the metadata.
 
 ## Classes
 
