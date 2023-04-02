@@ -66,7 +66,7 @@ class dbEmbedding(SQLModel, table=True):
                                             description='Unique database identifier for a given embedding.')
     vector:         bytes           = Field(sa_column=Column(LargeBinary), description='The user-supplied vector element as persisted in db as byte array. If sent in as a numpy array will be converted to bytes for storage.')
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
-    doc_id:         Optional[str]   = Field(description="An optional document_id associated with the embedding.")
+    doc_id:         Optional[str]   = Field(description="An optional document_id associated with the embedding.")  # add index
     meta:           Optional[str]   = Field(description="An optional json dictionary of metadata associated with the text.  Can be sent in as a dictionary and will be converted to json for storage.")
     created_at:     float           = Field(default_factory=time, description='The epoch timestamp when the embedding was created.')
     
@@ -517,22 +517,27 @@ class Collection :
                 session.commit()          
             self.make_index()  # create new index with no items
             logger.warning(f"deleted all items from {self.config.name}")
-        elif doc_ids:
-            logger.info(f"deleting {len(doc_ids)} items from {self.config.name}")
+            return
+        count = 0           
+        if doc_ids:        
+            logger.info(f"deleting doc_ids {doc_ids} from {self.config.name}")
             with Session(self.db_engine) as session:
                 for embedding in session.exec(select(dbEmbedding).where(dbEmbedding.doc_id.in_(doc_ids))):
+                    count += 1
                     self.hnsw_ix.mark_deleted(embedding.id)
                     session.delete(embedding)
                 session.commit()
-            self.save_index()
         elif filter:
             logger.info(f"deleting items from {self.config.name} with filter: {filter}")
             with Session(self.db_engine) as session:
                 for embedding in session.exec(select(dbEmbedding)).all():
                     if filter_item(filter, embedding.metadata_as_dict()):
+                        count += 1
                         self.hnsw_ix.mark_deleted(embedding.id)
                         session.delete(embedding)
                 session.commit()
+        if  count:
+            logger.info(f"deleted {count} items from {self.config.name}")                   
             self.save_index()
 
     def backup(self) -> Tuple[str, str]:
