@@ -452,7 +452,14 @@ class Collection :
                 query = select(dbEmbedding).order_by(asc(dbEmbedding.id)).offset(start).limit(limit)                        
             return [Embedding.from_db(e) for e in session.exec(query)]
 
-                
+    def get_embeddings_doc_ids(self, doc_ids : List[str]) ->  List[Embedding]:
+        """
+        get the embeddings for the specified doc_ids
+        """
+        with Session(self.db_engine) as session:    
+            query = select(dbEmbedding).where(dbEmbedding.doc_id.in_(doc_ids))
+            return [Embedding.from_db(e) for e in session.exec(query)]
+        
     def search(self, vector: np.array, k = 12, filter=None) -> List[SearchResponse]:        
         """
         query the hnsw index for the nearest neighbors of the given vector

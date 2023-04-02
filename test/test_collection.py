@@ -205,5 +205,38 @@ class TestGetEmbeddings(unittest.TestCase):
         self.assertEqual(embeddings[0].text, "This is a test text 3.")
 
 
+class TestGetEmbeddingsDocIds(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # Create a test collection
+        cls.collection = Collection.create(name="test-collection-doc-ids", dim=128)
+
+        # Add some embeddings to the collection
+        vectors = [np.random.rand(128) for _ in range(3)]
+        texts = ["doc_id text1", "doc_id text2", "doc_id text3"]
+        doc_ids = ["doc1", "doc2", "doc3"]
+        cls.collection.add_items(vectors, texts, doc_ids=doc_ids)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.collection.delete(delete_all=True)
+        for f in os.listdir("."):
+            if f.endswith('.sqlite'):
+                os.remove(f)
+            if f.endswith('.hnsw'):
+                os.remove(f)
+
+    def test_get_embeddings_doc_ids(self):
+        requested_doc_ids = ["doc1", "doc3"]
+        embeddings = self.collection.get_embeddings_doc_ids(requested_doc_ids)
+        
+        # Check if the correct doc_ids are in the returned embeddings
+        returned_doc_ids = [e.doc_id for e in embeddings]
+        for doc_id in requested_doc_ids:
+            self.assertIn(doc_id, returned_doc_ids)
+
+        # Check if the correct number of embeddings is returned
+        self.assertEqual(len(embeddings), len(requested_doc_ids))
+
 if __name__ == '__main__':
     unittest.main()

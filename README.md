@@ -18,6 +18,8 @@ The `Collection` class represents a combination of a SQLite database and an HNSW
 - `add_items`: Adds new items to the collection.
 - `add_embedding`: Adds a single Embedding object to the collection.
 - `add_embeddings`: Adds a list of Embedding objects to the collection.
+- `get_embeddings`: return a list of embeddings from an offset
+- `get_embeddings_doc_ids`: return a list of embeddings associated with specified doc_ids
 - `search`: Queries the HNSW index for the nearest neighbors of the given vector. Supply a k parameter (defaults to 12) and an optional filter dictionary.
 - `delete`: Deletes items from the collection based on a filter, a specific list of document_ids, or everything.
 
