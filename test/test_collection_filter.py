@@ -10,7 +10,7 @@ class TestSearchWithFilter(unittest.TestCase):
         logger.info("setUp")
         self.collection_name = "test-collection"
         self.dim = 2
-        self.collection = Collection.create(self.collection_name, self.dim)
+        self.collection = Collection(self.collection_name, self.dim)
         logger.info(f"collection: {self.collection}")
         
         # Add some test embeddings with metadata
@@ -24,9 +24,8 @@ class TestSearchWithFilter(unittest.TestCase):
 
 
     def tearDown(self):
-        os.remove(f"collection_test-collection.sqlite")
         for f in os.listdir("."):
-            if f.endswith('.hnsw'):
+            if f.endswith('.hnsw') or f.endswith('.sqlite'):
                 os.remove(f)
         
     def test_search_filter_category(self):

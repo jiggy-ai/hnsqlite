@@ -10,8 +10,7 @@ The `Collection` class represents a combination of a SQLite database and an HNSW
 
 #### Methods
 
-- `create`: Initializes a new Collection as a SQLite database file and associated HNSWLIB index.
-- `from_db`: Creates a Collection object from a SQLite collection database file.
+- `Collection()`:- Initializes a new Collection as a SQLite database file and associated HNSWLIB index. If the specified collection name is found in the database, the collection will be initialized from database. Otherwise, a new collection of the specified name will be created in the database.
 - `save_index`: Saves the current index after updates.
 - `make_index`: Creates an HNSW index that includes all embeddings in the collection database and uses this new index for the collection going forward.
 - `load_index`: Loads the latest HNSW index from disk and uses it for the collection.
@@ -54,7 +53,7 @@ from hnsqlite import Collection
 import numpy as np
 
 # Create a new collection
-collection = Collection.create(name="example", dim=128)
+collection = Collection(collection_name="example", dim=128)
 
 # Add items to the collection
 vectors = [np.random.rand(128) for _ in range(10)]

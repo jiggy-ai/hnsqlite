@@ -27,17 +27,18 @@ class dbHnswIndexConfig(SQLModel, table=True):
     """
     Configuration associated with an hnswlib index as stored in the database
     """
-    id:                      int       = Field(primary_key=True,                                               
-                                               description='Unique database identifier for a given index')
-    collection_id:           int       = Field(index=True, foreign_key="dbcollectionconfig.id", description="The Collection that the index is associated with.")
-    count:                   int       = Field(description="The number of vectors in the index.")
-    filename:                str       = Field(description='The hnswlib index filename')
-    md5sum:                  str       = Field(description='The md5sum of the index file')
-    M:                       int       = Field(ge=2, description="The M value passed to hnswlib when creating the index.")
-    ef_construction:         int       = Field(ge=10, description="The ef_construction value passed to hnswlib when creating the index.")
-    ef:                      int       = Field(ge=10, description="The recommended ef value to use at search time.")
-    created_at:              float     = Field(default_factory=time, description='The epoch timestamp when the index was created.')
-
+    id:                 int       = Field(primary_key=True,                                               
+                                          description='Unique database identifier for a given index')
+    collection_id:      int       = Field(index=True, foreign_key="dbcollectionconfig.id", description="The Collection that the index is associated with.")
+    count:              int       = Field(description="The number of vectors in the index.")
+    filename:           str       = Field(description='The hnswlib index filename')
+    md5sum:             str       = Field(description='The md5sum of the index file')
+    M:                  int       = Field(ge=2, description="The M value passed to hnswlib when creating the index.")
+    ef_construction:    int       = Field(ge=10, description="The ef_construction value passed to hnswlib when creating the index.")
+    ef:                 int       = Field(ge=10, description="The recommended ef value to use at search time.")
+    created_at:         float     = Field(default_factory=time, description='The epoch timestamp when the index was created.')
+    hnsw_ix:   Optional[bytes]    = Field(sa_column=Column(LargeBinary), description='The actual hnswlib index.')
+    
 
 class dbCollectionConfig(SQLModel, table=True):
     """
@@ -64,9 +65,10 @@ class dbEmbedding(SQLModel, table=True):
     """
     id:             int             = Field(primary_key=True,                                           
                                             description='Unique database identifier for a given embedding.')
+    collection_id:  int             = Field(index=True, foreign_key="dbcollectionconfig.id", description="The Collection that the embedding is associated with.")
+    doc_id:         Optional[str]   = Field(index=True, description="An optional user-specified document_id associated with the embedding.")
     vector:         bytes           = Field(sa_column=Column(LargeBinary), description='The user-supplied vector element as persisted in db as byte array. If sent in as a numpy array will be converted to bytes for storage.')
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
-    doc_id:         Optional[str]   = Field(description="An optional document_id associated with the embedding.")  # add 
     meta:           Optional[str]   = Field(description="An optional json dictionary of metadata associated with the text.  Can be sent in as a dictionary and will be converted to json for storage.")
     created_at:     float           = Field(default_factory=time, description='The epoch timestamp when the embedding was created.')
     
@@ -176,52 +178,56 @@ class SearchResponse(Embedding):
 class Collection :
     """
     A combination of a sqlite database and an hnswlib index that provides a persistent collection of embeddings (strings+vectors+metadata) including hnswlib index configuration.
-    """
-    def create(name : str, 
-               dim : int,
-               modelname   : Optional[str] = None, 
-               description : Optional[str] = None) -> "Collection":
+    """      
+    def __init__(self, 
+                 collection_name : str,
+                 dimension       : int,                                  
+                 sqlite_filename : Optional[str] = 'hnsqlite.sqlite',
+                 modelname       : Optional[str] = None,
+                 description     : Optional[str] = None) -> "Collection":
         """
-        initialize a new Collection as a sqlite database file and associated hnswlib index.
-        name is subject to DNS naming rules and must be unique.
+        collection_name:    The name of the collection to use.  must be unique with the sqlite database            
+        dimension:          The dimension of the vector space        
+        sqlite_filename:    The name of the sqlite database file to use for the collection
+                            If not specified a default name of 'hnsqlite.sqlite' will be used and the database will be created if it does not exist.
+        modelname:          Optional name of the model used to generate the embeddings
+        description:        Optional description of the collection
+        
+        Create a hnsqlite Collection object from a sqlite collection database file.
+        Creates hnsqlite tables within the database if necessary.
+        If the specified collection name is found in the database, the collection will be initialized
+        from the database.  Otherwise a new collection of the specified name will be created in the database.
         """
-        _is_valid_namestr(name, 'name')
-        # check if collection with the name already exists
-        if os.path.exists(f"collection_{name}.sqlite"):
-            raise ValueError(f"collection with name {name} already exists")
-        db_engine = create_engine(f"sqlite:///collection_{name}.sqlite")
-        SQLModel.metadata.create_all(db_engine)                    
-        cconfig = dbCollectionConfig(name=name, 
-                                   dim=dim,
-                                   model=modelname, 
-                                   description=description)        
-        with Session(db_engine) as session:            
-            session.add(cconfig)
-            session.commit()
-            session.refresh(cconfig)        
-        return Collection(db_engine, cconfig)
-    
-    @classmethod
-    def from_db(cls, name : str) -> "Collection":
-        """
-        create a Collection object from a sqlite collection database file
-        name can be either the filename or the collection name
-        """
-        if name.endswith('.sqlite'):
-            dbfile = name
-            collection_name = dbfile.split("_")[1].split('.')[0]                    
+        _is_valid_namestr(collection_name, 'name')
+        if not os.path.exists(sqlite_filename):        
+            logger.warning(f"sqlite_filename {sqlite_filename} does not exist; create new database")
         else:
-            dbfile = f"collection_{name}.sqlite"
-            collection_name = name        
-        logger.info(f"load collection {collection_name} from {dbfile}")
-        if not os.path.exists(dbfile):
-            raise FileNotFoundError
-        db_engine = create_engine(f'sqlite:///{dbfile}')
+            logger.info(f"sqlite_filename {sqlite_filename} exists; using existing database")
+        db_engine = create_engine(f'sqlite:///{sqlite_filename}')
+        SQLModel.metadata.create_all(db_engine)                    
         with Session(db_engine) as session:
             cconfig = session.exec(select(dbCollectionConfig).where(dbCollectionConfig.name == collection_name)).first()
-            if cconfig is None:
-                raise Exception(f"Collection {collection_name} not found in {dbfile}")
-        return Collection(db_engine, cconfig)
+            if cconfig:
+                if cconfig.dim != dimension:
+                    logger.error(f"collection {collection_name} already exists in {sqlite_filename} with dimension {cconfig.dim}")
+                    raise ValueError(f"collection {collection_name} already exists in {sqlite_filename} with dimension {cconfig.dim}")
+                else:
+                    logger.info(f"using existing collection {collection_name} found in {sqlite_filename}")
+            else:
+                logger.warning(f"collection {collection_name} not found in {sqlite_filename}; creating new collection")
+                cconfig = dbCollectionConfig(name=collection_name, 
+                                             dim=dimension,
+                                             model=modelname, 
+                                             description=description)        
+                with Session(db_engine) as session:            
+                    session.add(cconfig)
+                    session.commit()
+                    session.refresh(cconfig)         
+        
+        self.config = cconfig
+        self.db_engine = db_engine
+        self.load_index()
+   
 
     @classmethod
     def _save_index_to_disk(cls, name: str, hnsw_ix : dbHnswIndexConfig) -> Tuple[str, str, int]:
@@ -286,7 +292,7 @@ class Collection :
         logger.info(f"make index for collection {self.config.name} with M={M}, ef_construction={ef_construction}")
         hnsw_ix = hnswlib.Index(space = 'cosine', dim = self.config.dim) 
         with Session(self.db_engine) as session:
-            count = session.query(dbEmbedding).count()
+            count = session.query(dbEmbedding).where(dbEmbedding.collection_id == self.config.id ).count()
         hnsw_ix.set_num_threads(1)   # filtering requires 1 thread only
         # TODO: predict good ef_construction, M, ef values based on count and dim
         hnsw_ix.init_index(max_elements = count, ef_construction = ef_construction, M = M, allow_replace_deleted=True)
@@ -302,7 +308,7 @@ class Collection :
                 hnsw_ix.add_items([e.vector for e in batch], [e.id for e in batch])            
                 logger.info(f"hnsw_index.add_items   vectors/sec: {count/(time() - t0):.1f} ; total vectors: {count}")            
             batch = []            
-            for de in session.exec(select(dbEmbedding)).yield_per(BATCH_SIZE):
+            for de in session.exec(select(dbEmbedding).where(dbEmbedding.collection_id == self.config.id )).yield_per(BATCH_SIZE):
                 batch.append(de)
                 if len(batch) == BATCH_SIZE:
                     process_batch(batch)
@@ -360,7 +366,7 @@ class Collection :
         # validate that all expected vector IDs are in the index
         with Session(self.db_engine) as session:
             # get just the ids from the database
-            embs = set(session.exec(select(dbEmbedding.id)).all())
+            embs = set(session.exec(select(dbEmbedding.id).where(dbEmbedding.collection_id == self.config.id )).all())
         missing_ids = embs - set(self.hnsw_ix.get_ids_list())
         if missing_ids:
             logger.info(f'updating index to include {len(missing_ids)} embedding ids found in db but not in index')
@@ -371,12 +377,7 @@ class Collection :
             self.hnsw_ix.add_items(vectors, [e.id for e in embeddings], num_threads=CPU_COUNT, replace_deleted=True)      
             self.save_index()
             
-            
-    def __init__(self, db_engine, config : dbCollectionConfig) -> "Collection":
-        self.db_engine = db_engine
-        self.config = config
-        self.load_index()
-                            
+          
     def __str__(self) -> str:
         cstr = f"Collection({self.config.name}, {self.config.dim}"
         if self.config.model:
@@ -400,7 +401,8 @@ class Collection :
 
         # convert numpy vectors to bytes as float32 for storage in SQLite        
         vector_bytes = [v.astype(np.float32).tobytes() for v in vectors]
-        embeddings = [dbEmbedding(vector=v, text=t, doc_id=d, meta=m) for v, t, d, m in zip(vector_bytes, texts, doc_ids, metadata)]      
+        cid = self.config.id
+        embeddings = [dbEmbedding(vector=v, text=t, doc_id=d, meta=m, collection_id=cid) for v, t, d, m in zip(vector_bytes, texts, doc_ids, metadata)]      
         
         with Session(self.db_engine) as session:
             # Add new embeddings to the SQLite database
@@ -439,7 +441,7 @@ class Collection :
         return the number of items in the collection
         """
         with Session(self.db_engine) as session:
-            return session.query(dbEmbedding).count()
+            return session.query(dbEmbedding).where(dbEmbedding.collection_id == self.config.id).count()
 
     def get_embeddings(self, start: int, limit: int, reverse :bool) -> List[Embedding]:
         """
@@ -447,9 +449,9 @@ class Collection :
         """
         with Session(self.db_engine) as session:    
             if reverse:
-                query = select(dbEmbedding).order_by(desc(dbEmbedding.id)).offset(start).limit(limit)
+                query = select(dbEmbedding).where(dbEmbedding.collection_id == self.config.id).order_by(desc(dbEmbedding.id)).offset(start).limit(limit)
             else:
-                query = select(dbEmbedding).order_by(asc(dbEmbedding.id)).offset(start).limit(limit)                        
+                query = select(dbEmbedding).where(dbEmbedding.collection_id == self.config.id).order_by(asc(dbEmbedding.id)).offset(start).limit(limit)                        
             return [Embedding.from_db(e) for e in session.exec(query)]
 
     def get_embeddings_doc_ids(self, doc_ids : List[str]) ->  List[Embedding]:
@@ -457,7 +459,7 @@ class Collection :
         get the embeddings for the specified doc_ids
         """
         with Session(self.db_engine) as session:    
-            query = select(dbEmbedding).where(dbEmbedding.doc_id.in_(doc_ids))
+            query = select(dbEmbedding).where(dbEmbedding.collection_id == self.config.id).where(dbEmbedding.doc_id.in_(doc_ids))
             return [Embedding.from_db(e) for e in session.exec(query)]
         
     def search(self, vector: np.array, k = 12, filter=None) -> List[SearchResponse]:        
@@ -499,6 +501,7 @@ class Collection :
         id_to_distance = dict(zip(ids, distances))
 
         # fetch the embeddings from the database by id
+        # don't need to downselect/filter by collection id by since the embeding IDs are unique across collections
         with Session(self.db_engine) as session:
             embeddings = session.exec(select(dbEmbedding).where(dbEmbedding.id.in_(ids))).all()
 
@@ -522,7 +525,7 @@ class Collection :
         if doc_ids:        
             logger.info(f"deleting doc_ids {doc_ids} from {self.config.name}")
             with Session(self.db_engine) as session:
-                for embedding in session.exec(select(dbEmbedding).where(dbEmbedding.doc_id.in_(doc_ids))):
+                for embedding in session.exec(select(dbEmbedding).where(dbEmbedding.collection_id == self.config.id).where(dbEmbedding.doc_id.in_(doc_ids))):
                     count += 1
                     self.hnsw_ix.mark_deleted(embedding.id)
                     session.delete(embedding)
@@ -530,7 +533,7 @@ class Collection :
         elif filter:
             logger.info(f"deleting items from {self.config.name} with filter: {filter}")
             with Session(self.db_engine) as session:
-                for embedding in session.exec(select(dbEmbedding)).all():
+                for embedding in session.exec(select(dbEmbedding).where(dbEmbedding.collection_id == self.config.id)).all():
                     if filter_item(filter, embedding.metadata_as_dict()):
                         count += 1
                         self.hnsw_ix.mark_deleted(embedding.id)
@@ -539,21 +542,3 @@ class Collection :
         if  count:
             logger.info(f"deleted {count} items from {self.config.name}")                   
             self.save_index()
-
-    def backup(self) -> Tuple[str, str]:
-        """
-        save the sqlite database and index and return the filenames as (sqlite_backup_fn, hnsw_index_fn)
-        """
-        hnsw_index_fn = self.save_index()
-        db_fn = f"collection_{self.config.name}.sqlite"
-        sqlite_backup_fn = f'/tmp/{db_fn}'
-        source_conn = sqlite3.connect(db_fn)
-        try:
-            os.unlink(sqlite_backup_fn)
-        except:
-            pass
-        destination_conn = sqlite3.connect(sqlite_backup_fn)        
-        source_conn.backup(destination_conn)
-        source_conn.close()
-        destination_conn.close()
-        return sqlite_backup_fn, hnsw_index_fn
