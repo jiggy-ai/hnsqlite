@@ -66,7 +66,7 @@ class dbEmbedding(SQLModel, table=True):
                                             description='Unique database identifier for a given embedding.')
     vector:         bytes           = Field(sa_column=Column(LargeBinary), description='The user-supplied vector element as persisted in db as byte array. If sent in as a numpy array will be converted to bytes for storage.')
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
-    doc_id:         Optional[str]   = Field(description="An optional document_id associated with the embedding.")  # add index
+    doc_id:         Optional[str]   = Field(description="An optional document_id associated with the embedding.")  # add 
     meta:           Optional[str]   = Field(description="An optional json dictionary of metadata associated with the text.  Can be sent in as a dictionary and will be converted to json for storage.")
     created_at:     float           = Field(default_factory=time, description='The epoch timestamp when the embedding was created.')
     
@@ -557,57 +557,3 @@ class Collection :
         source_conn.close()
         destination_conn.close()
         return sqlite_backup_fn, hnsw_index_fn
-
-    def backup_s3(self, 
-                  bucket_name : str,
-                  endpoint_url : str,
-                  storage_key_id : str,
-                  storage_secret_key : str) -> Tuple[str, str]:
-        """
-        backup the sqlite database and index to s3
-        """
-        import boto3
-        s3 = boto3.resource('s3',
-                            endpoint_url=endpoint_url,
-                            aws_access_key_id=storage_key_id,
-                            aws_secret_access_key=storage_secret_key)
-        sqlite_backup_fn, hnsw_index_fn = self.backup()
-        sqlite_object_name = f"hnsqlite/collection_{self.config.name}.sqlite"
-        hnsw_object_name = f"hnsqlite/{hnsw_index_fn}"
-        bucket = s3.Bucket(bucket_name)
-        bucket.upload_file(sqlite_backup_fn, sqlite_object_name)
-        bucket.upload_file(hnsw_index_fn,  hnsw_object_name)
-
-    @classmethod
-    def from_s3(cls, 
-                collection_name : str, 
-                bucket_name : str,
-                endpoint_url : str,
-                storage_key_id : str,
-                storage_secret_key : str) -> "Collection":
-        """
-        create a Collection object from a sqlite collection database file
-        name can be either the filename or the collection name
-        """
-        import boto3
-        dbfile = f"collection_{collection_name}.sqlite"
-        sqlite_object_name = f"hnsqlite/{dbfile}"
-        s3 = boto3.resource('s3',
-                            endpoint_url=endpoint_url,
-                            aws_access_key_id=storage_key_id,
-                            aws_secret_access_key=storage_secret_key)      
-        bucket = s3.Bucket(bucket_name)  
-        logger.info(f"load collection {collection_name} from s3")                
-        bucket.download_file(sqlite_object_name, dbfile)
-        db_engine = create_engine(f'sqlite:///{dbfile}')
-        with Session(db_engine) as session:
-            cconfig = session.exec(select(dbCollectionConfig).where(dbCollectionConfig.name == collection_name)).first()
-            if cconfig is None:
-                raise Exception(f"Collection {collection_name} not found in {dbfile}")
-            index_config = session.exec(select(dbHnswIndexConfig).where(dbHnswIndexConfig.collection_id == cconfig.id).order_by(dbHnswIndexConfig.id.desc())).first()
-            if not index_config:            
-                raise Exception(f"Collection {collection_name} has no index in {dbfile}")
-        hnsw_index_fn = index_config.filename
-        hnsw_object_name = f"hnsqlite/{hnsw_index_fn}"
-        bucket.download_file(hnsw_object_name, hnsw_index_fn)
-        return Collection(db_engine, cconfig)        
