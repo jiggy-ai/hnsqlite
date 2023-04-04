@@ -34,39 +34,25 @@ The `Collection` class represents a combination of a SQLite database and an HNSW
 - `distance`: A float value representing the cosine similarity distance between the search result and the query vector.  Lower distances represent closer matches.
 
 
-#### Methods
+#### Collection Methods
 
 - `Collection()`:- Initializes a new Collection as a SQLite database file and associated HNSWLIB index. If the specified collection name is found in the database, the collection will be initialized from database. Otherwise, a new collection of the specified name will be created in the database.
-- `save_index`: Saves the current index after updates.
-- `make_index`: Creates an HNSW index that includes all embeddings in the collection database and uses this new index for the collection going forward.
-- `load_index`: Loads the latest HNSW index from disk and uses it for the collection.
-- `add_items`: Adds new items to the collection.
-- `add_embedding`: Adds a single Embedding object to the collection.
-- `add_embeddings`: Adds a list of Embedding objects to the collection.
+- `add_items`: Adds new items to the collection as lists of individual components.  An alternative interface to add_embeddings().
+- `add_embedding`: Adds a single Embedding object to the collection.  A convenience alternative to add_embeddings().
+- `add_embeddings`: Adds a list of Embedding objects to the collection.  An alternative interface to add_items().
 - `get_embeddings`: return a list of embeddings from an offset
 - `get_embeddings_doc_ids`: return a list of embeddings associated with specified doc_ids
 - `search`: Queries the HNSW index for the nearest neighbors of the given vector. Supply a k parameter (defaults to 12) and an optional filter dictionary.
 - `delete`: Deletes items from the collection based on a filter, a specific list of document_ids, or everything.
 
-### dbHnswIndexConfig
 
-The `dbHnswIndexConfig` class represents the configuration associated with an HNSWLIB index as stored in the database.
+### Database classes
 
-### dbCollectionConfig
+The following classes are the internal SqlModel data classes used to persist the embeddings and configuration in sqlite. They are not directly accessed by the user, but will be created as tables in the sqlite database:
+ - The `dbHnswIndexConfig` class represents the configuration associated with an HNSWLIB index as stored in the database.  
+ - The `dbCollectionConfig` class represents the configuration associated with a collection of strings and embeddings as persisted in the database.
+ - The `dbEmbedding` class represents an embedding as stored in the database.
 
-The `dbCollectionConfig` class represents the configuration associated with a collection of strings and embeddings as persisted in the database.
-
-### dbEmbedding
-
-The `dbEmbedding` class represents an embedding as stored in the database.
-
-### Embedding
-
-The `Embedding` class represents an Embedding as sent to/from the Collection API.
-
-### SearchResponse
-
-The `SearchResponse` class represents the response of a search operation, containing the item (embedding) and its distance from the query vector.
 
 
 ## Usage
