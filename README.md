@@ -8,6 +8,32 @@
 
 The `Collection` class represents a combination of a SQLite database and an HNSWLIB index. The purpose of this class is to provide a persistent collection of embeddings (strings, vectors, and metadata) and search time filtering based on the metadata.
 
+### Embedding
+
+`Embedding` is a class that represents an embedding sent to or received from the Collection API.
+
+**Attributes:**
+
+- `vector`: A list of float values representing the user-supplied vector element. The vector can be sent as a numpy array and will be converted to a list of floats.
+- `text`: The text that was input to the model to generate this embedding.
+- `doc_id`: An optional document_id associated with the embedding.
+- `metadata`: An optional dictionary of metadata associated with the text.
+- `created_at`: The epoch timestamp when the embedding was created (in seconds).
+
+### SearchResponse
+
+`SearchResponse` is a class derived from the `Embedding` class, specifically designed for returning search results. A `SearchResponse` object consists of an embedding along with its distance to the query vector.
+
+**Attributes:**
+
+- `vector`: A list of float values representing the user-supplied vector element. The vector can be sent as a numpy array and will be converted to a list of floats.
+- `text`: The text that was input to the model to generate this embedding.
+- `doc_id`: An optional document_id associated with the embedding.
+- `metadata`: An optional dictionary of metadata associated with the text.
+- `created_at`: The epoch timestamp when the embedding was created (in seconds).
+- `distance`: A float value representing the cosine similarity distance between the search result and the query vector.  Lower distances represent closer matches.
+
+
 #### Methods
 
 - `Collection()`:- Initializes a new Collection as a SQLite database file and associated HNSWLIB index. If the specified collection name is found in the database, the collection will be initialized from database. Otherwise, a new collection of the specified name will be created in the database.
