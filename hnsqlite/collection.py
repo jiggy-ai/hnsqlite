@@ -235,7 +235,11 @@ class Collection :
         Save the current index to disk and return the filename, md5sum, and count of items in the index
         """
         count = len(hnsw_ix.get_ids_list())
-        filename = f"index_{name}_{count}_{int(1000 * time())}.hnsw"
+        filename = f"index_{name}.hnsw"
+        try:
+            os.unlink(filename)
+        except:
+            pass
         hnsw_ix.save_index(filename)
         md5sum = md5_file(filename)
         logger.info(f"saved index to {filename} with md5sum {md5sum} and {count} items")
@@ -246,20 +250,13 @@ class Collection :
         Save the current index config to the database
         """
         with Session(self.db_engine) as session:
-            # delete old index from database and filesystem
-            old_filenames = []
+            # delete old index from database
             if delete_previous_index:
                 for old_index in session.query(dbHnswIndexConfig).filter(dbHnswIndexConfig.collection_id == self.config.id).all():
-                    old_filenames.append(old_index.filename)
                     session.delete(old_index)
             session.add(index)
             session.commit()   # commit the new index record and deletion of the old index records
             session.refresh(index)
-            for fn in old_filenames:
-                try:
-                    os.remove(fn) # finally remove the old index files from the filesystem after the commit
-                except:
-                    logger.debug(f"exception removing old index file {fn}")
             logger.info(f"saved index to database with id {index.id}")
 
         
@@ -353,7 +350,8 @@ class Collection :
         md5sum = md5_file(index_config.filename)
         if md5sum != index_config.md5sum:
             logger.error(f"md5sum {md5sum} does not match config.md5sum {index_config.md5sum}")
-            raise Exception(f"md5sum {md5sum} does not match config.md5sum {index_config.md5sum}")
+            self.make_index()   # intialize and load the index from scratch
+            return
         else:
             logger.info(f"md5sum matches index.md5sum")
         hnsw_ix = hnswlib.Index(space='cosine', dim=self.config.dim)
