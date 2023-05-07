@@ -17,6 +17,8 @@ import numpy as np
 from .filter import filter_item
 from .util import md5_file, _is_valid_namestr
 import sqlite3
+from collections import defaultdict
+import glob
 
 CPU_COUNT = cpu_count()
 
@@ -166,7 +168,8 @@ class Embedding(BaseModel):
         """
         return np.array(self.vector)
 
-        
+
+            
 class SearchResponse(Embedding):
     """
     Return a search result consisting of an embedding and the distance to the query vector
@@ -180,16 +183,17 @@ class Collection :
     A combination of a sqlite database and an hnswlib index that provides a persistent collection of embeddings (strings+vectors+metadata) including hnswlib index configuration.
     """      
     def __init__(self, 
-                 collection_name : str,
-                 dimension       : int,                                  
-                 sqlite_filename : Optional[str] = 'hnsqlite.sqlite',
+                 collection_name : Optional[str] = None,
+                 dimension       : Optional[int] = None,                                  
+                 sqlite_filename : Optional[str] = None,
                  modelname       : Optional[str] = None,
                  description     : Optional[str] = None) -> "Collection":
         """
-        collection_name:    The name of the collection to use.  must be unique with the sqlite database            
-        dimension:          The dimension of the vector space        
+        collection_name:    The name of the collection to use.  must be unique with the sqlite database.  Need not be specified if the sqlite database contains only one collection.
+        dimension:          The dimension of the vector space. Need not be specified if the collection already exists.       
         sqlite_filename:    The name of the sqlite database file to use for the collection
-                            If not specified a default name of 'hnsqlite.sqlite' will be used and the database will be created if it does not exist.
+                            If not specified and a single sqlite file exists in the current directory, that file will be used.
+                            otherwise a new database will be created with the default name of 'hnsqlite.sqlite'.
         modelname:          Optional name of the model used to generate the embeddings
         description:        Optional description of the collection
         
@@ -198,7 +202,15 @@ class Collection :
         If the specified collection name is found in the database, the collection will be initialized
         from the database.  Otherwise a new collection of the specified name will be created in the database.
         """
-        _is_valid_namestr(collection_name, 'name')
+        if collection_name is not None:   # validate collection_name if specified
+            _is_valid_namestr(collection_name, 'name')
+        if not sqlite_filename:   # find sqlite file if not specified
+            sqlite_files = glob.glob("*.sqlite")
+            if len(sqlite_files) == 1:
+                sqlite_filename = sqlite_files[0]
+                logger.info(f"using sqlite_filename {sqlite_filename}")
+            elif len(sqlite_files) > 1:
+                sqlite_filename = 'hnsqlite.sqlite'  # default name
         if not os.path.exists(sqlite_filename):        
             logger.warning(f"sqlite_filename {sqlite_filename} does not exist; create new database")
         else:
@@ -206,14 +218,21 @@ class Collection :
         db_engine = create_engine(f'sqlite:///{sqlite_filename}')
         SQLModel.metadata.create_all(db_engine)                    
         with Session(db_engine) as session:
-            cconfig = session.exec(select(dbCollectionConfig).where(dbCollectionConfig.name == collection_name)).first()
+            if not collection_name:
+                cconfig = session.exec(select(dbCollectionConfig)).one()
+                collection_name = cconfig.name
+            else:
+                cconfig = session.exec(select(dbCollectionConfig).where(dbCollectionConfig.name == collection_name)).first()
             if cconfig:
-                if cconfig.dim != dimension:
+                if dimension and cconfig.dim != dimension:
                     logger.error(f"collection {collection_name} already exists in {sqlite_filename} with dimension {cconfig.dim}")
                     raise ValueError(f"collection {collection_name} already exists in {sqlite_filename} with dimension {cconfig.dim}")
                 else:
                     logger.info(f"using existing collection {collection_name} found in {sqlite_filename}")
             else:
+                if not dimension or not collection_name:
+                    logger.error(f'collection name and dimension must be specified to create a new collection')
+                    raise ValueError(f'collection name and dimension must be specified to create a new collection')
                 logger.warning(f"collection {collection_name} not found in {sqlite_filename}; creating new collection")
                 cconfig = dbCollectionConfig(name=collection_name, 
                                              dim=dimension,
@@ -302,7 +321,7 @@ class Collection :
             # batches process of embeddings for efficiency
             def process_batch(batch : list[dbEmbedding]):            
                 # add batch of document embeddings to index
-                hnsw_ix.add_items([e.vector for e in batch], [e.id for e in batch])            
+                hnsw_ix.add_items([e.vector_as_array() for e in batch], [e.id for e in batch])            
                 logger.info(f"hnsw_index.add_items   vectors/sec: {count/(time() - t0):.1f} ; total vectors: {count}")            
             batch = []            
             for de in session.exec(select(dbEmbedding).where(dbEmbedding.collection_id == self.config.id )).yield_per(BATCH_SIZE):
@@ -347,6 +366,10 @@ class Collection :
                 self.make_index()   # intialize and load the index
                 return
         logger.info(f"loading index {index_config}")
+        if not os.path.exists(index_config.filename):
+            logger.error(f"index file {index_config.filename} does not exist")
+            self.make_index()
+            return
         md5sum = md5_file(index_config.filename)
         if md5sum != index_config.md5sum:
             logger.error(f"md5sum {md5sum} does not match config.md5sum {index_config.md5sum}")
@@ -459,7 +482,37 @@ class Collection :
         with Session(self.db_engine) as session:    
             query = select(dbEmbedding).where(dbEmbedding.collection_id == self.config.id).where(dbEmbedding.doc_id.in_(doc_ids))
             return [Embedding.from_db(e) for e in session.exec(query)]
-        
+
+    def get_embeddings_by_doc(self, index: int, limit: int, reverse :bool, max_per_doc: int = 1) -> Tuple[List[List[Embedding]], int]:
+        """
+        return a tuple containing a list of lists of Embedding objects from the collection and the index of the last item processed.
+        the top level list is per document, the inner list is the embeddings for that document
+        index is is the offset into the list of documents; should be -1 for first item if reverse is True
+        limit is the number of documents to return
+        max_per_doc is the maximum number of embeddings to return per document
+        """
+        docs_dl = defaultdict(list)
+        query = select(dbEmbedding).where(dbEmbedding.collection_id == self.config.id)
+        if reverse:
+            index = index if index >= 0 else 9223372036854775807   # largest 64 bit signed integer
+            query = query.order_by(desc(dbEmbedding.id)).where(dbEmbedding.id < index)
+        else:
+            query = query.order_by(asc(dbEmbedding.id)).where(dbEmbedding.id > index)
+        with Session(self.db_engine) as session:
+            for emb in session.exec(query):
+                index = emb.id  # advance index of last item processed
+                if emb.doc_id not in docs_dl and len (docs_dl) >= limit:
+                    break
+                docs_dl[emb.doc_id].append(Embedding.from_db(emb))
+
+        for doc_id in docs_dl:
+            docs_dl[doc_id].sort(key=lambda e: e.created_at)
+        if max_per_doc is None:
+            docs = [docs_dl[doc_id] for doc_id in docs_dl]
+        else:
+            docs = [docs_dl[doc_id][:max_per_doc] for doc_id in docs_dl]
+        return docs, index
+
     def search(self, vector: np.array, k = 12, filter=None) -> List[SearchResponse]:        
         """
         query the hnsw index for the nearest neighbors of the given vector
