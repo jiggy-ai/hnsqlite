@@ -94,7 +94,7 @@ class dbEmbedding(SQLModel, table=True):
         """
         return np.frombuffer(self.vector, dtype=np.float32)
 
-    def vector_as_list(self) -> list[float]:    
+    def vector_as_list(self) -> List[float]:    
         """
         return the stored vector as a numpy array        
         """
@@ -126,7 +126,7 @@ class Embedding(BaseModel):
     """
     An Embedding as sent to/from the Collection API
     """
-    vector:         list[float]     = Field(description='The user-supplied vector element as stored as a list of floats. Can be sent in as a numpy array and will be converted to a list of floats.')   
+    vector:         List[float]     = Field(description='The user-supplied vector element as stored as a list of floats. Can be sent in as a numpy array and will be converted to a list of floats.')   
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
     doc_id:         Optional[str]   = Field(description="An optional document_id associated with the embedding.")
     metadata:       Optional[dict]  = Field(description="An optional dictionary of metadata associated with the text")
@@ -319,7 +319,7 @@ class Collection :
             count = 0
             BATCH_SIZE = CPU_COUNT*16
             # batches process of embeddings for efficiency
-            def process_batch(batch : list[dbEmbedding]):            
+            def process_batch(batch : List[dbEmbedding]):            
                 # add batch of document embeddings to index
                 hnsw_ix.add_items([e.vector_as_array() for e in batch], [e.id for e in batch])            
                 logger.info(f"hnsw_index.add_items   vectors/sec: {count/(time() - t0):.1f} ; total vectors: {count}")            
