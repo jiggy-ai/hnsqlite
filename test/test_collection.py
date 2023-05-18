@@ -293,5 +293,35 @@ class TestMultipleCollectionsInSameDatabase(unittest.TestCase):
 
 
 
+                
+class TestGetEmbeddingById(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.collection = Collection(collection_name="test-collection-id", dimension=128)
+        vectors = [np.random.rand(128) for _ in range(3)]
+        texts = ["id text1", "id text2", "id text3"]
+        cls.collection.add_items(vectors, texts)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.collection.delete(delete_all=True)
+        for f in os.listdir("."):
+            if f.endswith('.sqlite'):
+                os.remove(f)
+            if f.endswith('.hnsw'):
+                os.remove(f) 
+
+    def test_get_embedding_by_id(self):
+        # Get Embedding using the get_embeddings() method to compare
+        target_embedding = self.collection.get_embeddings(start=0, limit=1, reverse=False)[0]
+
+        # Get Embedding using the new get_embedding_by_id() method
+        result_embedding = self.collection.get_embedding_by_id(target_embedding.id)
+        
+        # Check if the embeddings are the same
+        self.assertEqual(result_embedding.text, target_embedding.text)
+        self.assertEqual(result_embedding.vector, target_embedding.vector)
+        self.assertEqual(result_embedding.doc_id, target_embedding.doc_id)
+
 if __name__ == '__main__':
     unittest.main()

@@ -126,6 +126,7 @@ class Embedding(BaseModel):
     """
     An Embedding as sent to/from the Collection API
     """
+    id:             Optional[int]   = Field(description='Unique database identifier for a given embedding.')
     vector:         list[float]     = Field(description='The user-supplied vector element as stored as a list of floats. Can be sent in as a numpy array and will be converted to a list of floats.')   
     text:           str             = Field(description="The text that was input to the model to generate this embedding.")
     doc_id:         Optional[str]   = Field(description="An optional document_id associated with the embedding.")
@@ -148,7 +149,8 @@ class Embedding(BaseModel):
     
     @classmethod
     def from_db(cls, db_embedding: dbEmbedding) -> "Embedding":
-        return Embedding(vector=db_embedding.vector_as_list(),
+        return Embedding(id=db_embedding.id,
+                         vector=db_embedding.vector_as_list(),                         
                          text=db_embedding.text,
                          doc_id=db_embedding.doc_id,
                          metadata=db_embedding.metadata_as_dict(),
@@ -210,6 +212,8 @@ class Collection :
                 sqlite_filename = sqlite_files[0]
                 logger.info(f"using sqlite_filename {sqlite_filename}")
             elif len(sqlite_files) > 1:
+                raise Exception(f"sqlite_filename was not specified and there are multiple sqlite files here: {sqlite_files}.")
+            else:
                 sqlite_filename = 'hnsqlite.sqlite'  # default name
         if not os.path.exists(sqlite_filename):        
             logger.warning(f"sqlite_filename {sqlite_filename} does not exist; create new database")
@@ -513,6 +517,16 @@ class Collection :
             docs = [docs_dl[doc_id][:max_per_doc] for doc_id in docs_dl]
         return docs, index
 
+    def get_embedding_by_id(self, id: int) -> Embedding:
+        """
+        get a specific embedding by its unique numeric id
+        """
+        with Session(self.db_engine) as session:
+            e = session.get(dbEmbedding, id)
+            if not e or e.collection_id != self.config.id:
+                raise ValueError(f"Invalid id: {id}")
+            return Embedding.from_db(e)
+        
     def search(self, vector: np.array, k = 12, filter=None) -> List[SearchResponse]:        
         """
         query the hnsw index for the nearest neighbors of the given vector
@@ -578,7 +592,10 @@ class Collection :
             with Session(self.db_engine) as session:
                 for embedding in session.exec(select(dbEmbedding).where(dbEmbedding.collection_id == self.config.id).where(dbEmbedding.doc_id.in_(doc_ids))):
                     count += 1
-                    self.hnsw_ix.mark_deleted(embedding.id)
+                    try:
+                        self.hnsw_ix.mark_deleted(embedding.id)
+                    except RuntimeError as e: 
+                        logger.warning(e)
                     session.delete(embedding)
                 session.commit()
         elif filter:
