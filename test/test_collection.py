@@ -112,7 +112,7 @@ class TestCollection2(unittest.TestCase):
         logger.info("test_search_invalid")
         collection = Collection("test-collection7", 128)
         vector = np.random.rand(64).astype(np.float32)  # Wrong length
-        with self.assertRaises(Exception):
+        with self.assertRaises(ValueError):
             collection.search(vector)
 
 
