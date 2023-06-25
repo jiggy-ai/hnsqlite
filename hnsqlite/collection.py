@@ -535,6 +535,10 @@ class Collection :
         """
         if isinstance(vector, list):
             vector = np.array(vector)
+
+        vector_dim = vector.shape[0]
+        if vector_dim != self.config.dim:
+            raise ValueError(f"Dim mismatch: vector: {vector_dim}, collection: {self.config.dim}")
         
         def _filter(id):
             with Session(self.db_engine) as session:

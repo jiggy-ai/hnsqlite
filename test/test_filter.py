@@ -1,6 +1,6 @@
 
 import unittest
-from filter import filter_item
+from hnsqlite.filter import filter_item
 
 class TestFilterItem(unittest.TestCase):
     def test_filter_item(self):
