@@ -1,8 +1,8 @@
 import hashlib
 import re
 
-def md5_file(filename):
-    with open(filename, 'rb') as f:
+def md5_file(file_path):
+    with open(file_path, 'rb') as f:
         md5 = hashlib.md5()
         while True:
             data = f.read(1024*1024)

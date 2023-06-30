@@ -189,7 +189,8 @@ class Collection :
                  dimension       : Optional[int] = None,                                  
                  sqlite_filename : Optional[str] = None,
                  modelname       : Optional[str] = None,
-                 description     : Optional[str] = None) -> "Collection":
+                 description     : Optional[str] = None,
+                 index_file_dir  : Optional[str] = None) -> "Collection":
         """
         collection_name:    The name of the collection to use.  must be unique with the sqlite database.  Need not be specified if the sqlite database contains only one collection.
         dimension:          The dimension of the vector space. Need not be specified if the collection already exists.       
@@ -198,6 +199,7 @@ class Collection :
                             otherwise a new database will be created with the default name of 'hnsqlite.sqlite'.
         modelname:          Optional name of the model used to generate the embeddings
         description:        Optional description of the collection
+        index_file_dir:     Optional directory to save index files in. Defaults to current dirwctory.
         
         Create a hnsqlite Collection object from a sqlite collection database file.
         Creates hnsqlite tables within the database if necessary.
@@ -245,26 +247,35 @@ class Collection :
                 with Session(db_engine) as session:            
                     session.add(cconfig)
                     session.commit()
-                    session.refresh(cconfig)         
-        
+                    session.refresh(cconfig)
+
+        if index_file_dir is not None and not os.path.exists(index_file_dir):
+            raise ValueError(f"Index file dir does not exist: {index_file_dir}")
+        self.index_file_dir = index_file_dir
+
         self.config = cconfig
         self.db_engine = db_engine
         self.load_index()
    
+    def _get_index_file_path(self, filename):
+        if not self.index_file_dir:
+            return filename
 
-    @classmethod
-    def _save_index_to_disk(cls, name: str, hnsw_ix : dbHnswIndexConfig) -> Tuple[str, str, int]:
+        return os.path.join(os.path.expanduser(self.index_file_dir), filename)
+
+    def _save_index_to_disk(self, name: str, hnsw_ix : hnswlib.Index) -> Tuple[str, str, int]:
         """
         Save the current index to disk and return the filename, md5sum, and count of items in the index
         """
         count = len(hnsw_ix.get_ids_list())
         filename = f"index_{name}.hnsw"
+        file_path = self._get_index_file_path(filename)
         try:
-            os.unlink(filename)
+            os.unlink(file_path)
         except:
             pass
-        hnsw_ix.save_index(filename)
-        md5sum = md5_file(filename)
+        hnsw_ix.save_index(file_path)
+        md5sum = md5_file(file_path)
         logger.info(f"saved index to {filename} with md5sum {md5sum} and {count} items")
         return filename, md5sum, count
 
@@ -289,7 +300,7 @@ class Collection :
         Used to persist the dbHnswIndexConfig after calling add_items or delete_items
         """
         # save the index to disk
-        filename, md5sum, count = Collection._save_index_to_disk(self.config.name, self.hnsw_ix)
+        filename, md5sum, count = self._save_index_to_disk(self.config.name, self.hnsw_ix)
 
         # create the new index record
         index_config = dbHnswIndexConfig(collection_id = self.config.id,
@@ -341,7 +352,7 @@ class Collection :
         hnsw_ix.set_num_threads(1)  # filtering requires 1 thread only  
         
         # persist the index to disk
-        filename, md5sum, _count = Collection._save_index_to_disk(self.config.name, hnsw_ix)
+        filename, md5sum, _count = self._save_index_to_disk(self.config.name, hnsw_ix)
         assert count == _count        
     
         # create the new index record
@@ -370,11 +381,12 @@ class Collection :
                 self.make_index()   # intialize and load the index
                 return
         logger.info(f"loading index {index_config}")
-        if not os.path.exists(index_config.filename):
-            logger.error(f"index file {index_config.filename} does not exist")
+        index_file_path = self._get_index_file_path(index_config.filename)
+        if not os.path.exists(index_file_path):
+            logger.error(f"index file {index_file_path} does not exist")
             self.make_index()
             return
-        md5sum = md5_file(index_config.filename)
+        md5sum = md5_file(index_file_path)
         if md5sum != index_config.md5sum:
             logger.error(f"md5sum {md5sum} does not match config.md5sum {index_config.md5sum}")
             self.make_index()   # intialize and load the index from scratch
@@ -382,7 +394,7 @@ class Collection :
         else:
             logger.info(f"md5sum matches index.md5sum")
         hnsw_ix = hnswlib.Index(space='cosine', dim=self.config.dim)
-        hnsw_ix.load_index(index_config.filename, max_elements=index_config.count, allow_replace_deleted=True)
+        hnsw_ix.load_index(index_file_path, max_elements=index_config.count, allow_replace_deleted=True)
         hnsw_ix.set_ef(index_config.ef)
         hnsw_ix.set_num_threads(1)   # filtering requires 1 thread only
         logger.info(f"load hnswlib index {index_config} complete")
