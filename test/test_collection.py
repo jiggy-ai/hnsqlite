@@ -3,6 +3,7 @@ import unittest
 from hnsqlite import Collection, Embedding
 import numpy as np
 import os
+import tempfile
 
 
 class TestCollection(unittest.TestCase):
@@ -259,6 +260,9 @@ class TestMultipleCollectionsInSameDatabase(unittest.TestCase):
             cls.collection1.delete(delete_all=True)
             cls.collection2.delete(delete_all=True)
             os.remove(cls.sqlite_filename)
+            for f in os.listdir("."):
+                if f.endswith('.hnsw'):
+                    os.remove(f) 
  
         def test_collection_counts(self):
             # Check counts of embeddings in both collections
@@ -292,8 +296,6 @@ class TestMultipleCollectionsInSameDatabase(unittest.TestCase):
                 self.assertTrue(np.allclose(e.vector_as_array(), self.vectors2[i], rtol=tolerance, atol=tolerance))
 
 
-
-                
 class TestGetEmbeddingById(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -322,6 +324,51 @@ class TestGetEmbeddingById(unittest.TestCase):
         self.assertEqual(result_embedding.text, target_embedding.text)
         self.assertEqual(result_embedding.vector, target_embedding.vector)
         self.assertEqual(result_embedding.doc_id, target_embedding.doc_id)
+
+
+class TestIndexPersistence(unittest.TestCase):
+    def setUp(self):
+        self.collection_name = "test-index-persistence"
+
+    def _populate_collection(self, collection):
+        vectors = [np.array([0.1, 0.2]), np.array([0.3, 0.4]), np.array([0.5, 0.6])]
+        texts = ["text1", "text2", "text3"]
+        doc_ids = ["doc1", "doc2", "doc3"]
+        metadata = [{"category": "A"}, {"category": "B"}, {"category": "A"}]
+        collection.add_items(vectors, texts, doc_ids=doc_ids,  metadata=metadata)
+
+    def test_custom_index_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Set up collection
+            sqlite_filename = os.path.join(tmpdir, self.collection_name + ".sqlite")
+            collection1 = Collection(collection_name = self.collection_name,
+                                    sqlite_filename = sqlite_filename,
+                                    index_file_dir = tmpdir, 
+                                    dimension = 2)
+            self._populate_collection(collection1)
+            
+            # Save index, hopefully to new location
+            collection1.save_index()
+
+            # Create a new collection, load and verify search returns expected # of items
+            collection2 = Collection(collection_name = self.collection_name,
+                                    sqlite_filename = sqlite_filename,
+                                    index_file_dir = tmpdir, 
+                                    dimension = 2)
+            assert len(collection2.search([0.0, 0.0])) == 3
+
+    def test_custom_index_dir_does_not_exist(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Set up
+            sqlite_filename = os.path.join(tmpdir, self.collection_name + ".sqlite")
+
+            # Asset expected exception raised
+            with self.assertRaises(ValueError):
+                Collection(collection_name = self.collection_name,
+                           sqlite_filename = sqlite_filename,
+                           index_file_dir = "non-existent-dir", 
+                           dimension = 2)
+
 
 if __name__ == '__main__':
     unittest.main()
